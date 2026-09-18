@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Career-Ops{% endblock %}
+{% block content %}
+<div class="layout">
+  <aside class="filters">
+    <form method="get" action="/jobs">
+      <label>Search
+        <input type="text" name="q" value="{{ filters.get('q','') }}" placeholder="title, company, keyword">
+      </label>
+      <label>Role family
+        <select name="family">
+          <option value="">All families</option>
+          {% for f in families %}
+          <option value="{{ f.slug }}" {% if filters.get('family') == f.slug %}selected{% endif %}>{{ f.name }} ({{ f.n }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Experience band
+        <select name="band">
+          <option value="">Any experience</option>
+          {% for b in bands %}
+          <option value="{{ b }}" {% if filters.get('band') == b %}selected{% endif %}>{{ b }} YOE</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Work model
+        <select name="work">
+          <option value="">Any</option>
+          {% for w in ['remote','hybrid','onsite'] %}
+          <option value="{{ w }}" {% if filters.get('work') == w %}selected{% endif %}>{{ w }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Freshness
+        <select name="freshness">
+          <option value="">Any state</option>
+          {% for s, label in [('active','active (seen ≤7d)'), ('likely_active','likely active'), ('stale','stale'), ('closed','closed')] %}
+          <option value="{{ s }}" {% if filters.get('freshness') == s %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Location / company
+        <input type="text" name="loc" value="{{ filters.get('loc','') }}" placeholder="e.g. Bengaluru">
+      </label>
+      <button class="btn primary" type="submit">Apply filters</button>
+      <a class="btn ghost" href="/jobs">Reset</a>
+    </form>
+    <p class="muted small">
+      Experience filters match the range stated in the posting. Jobs with no stated
+      experience stay visible in every band, marked "exp not stated".
+    </p>
+  </aside>
+
+  <section class="feed">
+    <div class="feed-head">
+      <h1>{{ total }} job{{ '' if total == 1 else 's' }}</h1>
+      <span class="muted">newest sightings first</span>
+    </div>
+
+    {% if request.query_params.get('feedback') == 'thanks' %}
+    <div class="flash">Thanks — your report is recorded and shows up in the ops review queue.</div>
+    {% endif %}
+
+    {% if jobs|length == 0 %}
+    <div class="card empty">
+      <b>No jobs match these filters.</b>
+      <p class="muted">Nothing was invented to fill the page. Widen the filters, or
+      <a href="/roles">request a role category</a> the pipelines should index next.</p>
+    </div>
+    {% endif %}
+
+    {% for j in jobs %}
+    <a class="card job-card" href="/jobs/{{ j.id }}">
+      <div class="job-card-top">
+        <div>
+          <b class="job-title">{{ j.title }}</b>
+          <div class="muted">
+            {{ j.company }}{% if j.location %} · {{ j.location }}{% endif %}
+            {% if j.work_model and j.work_model != 'unspecified' %} · {{ j.work_model }}{% endif %}
+          </div>
+        </div>
+        <span class="badge fresh-{{ j.freshness }}">{{ j.freshness.replace('_',' ') }}</span>
+      </div>
+      <div class="chips">
+        {% if j.family_name %}<span class="chip">{{ j.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified</span>{% endif %}
+        {% if j.exp_stated %}<span class="chip">{{ j.exp_stated }}</span>{% else %}<span class="chip muted-chip">exp not stated</span>{% endif %}
+        {% if j.salary_text %}<span class="chip">{{ j.salary_text }}</span>{% endif %}
+        {% if j.source_count and j.source_count > 1 %}<span class="chip merged">{{ j.source_count }} sources merged</span>{% endif %}
+        {% if j.applicants %}<span class="chip muted-chip">{{ j.applicants }} applicants</span>{% endif %}
+      </div>
+      <div class="meta">first seen {{ j.first_seen }} · last seen {{ j.last_seen }}{% if j.posted_text %} · source said: {{ j.posted_text }}{% endif %}</div>
+    </a>
+    {% endfor %}
+
+    {% if pages > 1 %}
+    <div class="pager">
+      {% if page > 1 %}<a class="btn" href="/jobs?{{ filters|urlencode }}&page={{ page - 1 }}">← newer</a>{% endif %}
+      <span class="muted">page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a class="btn" href="/jobs?{{ filters|urlencode }}&page={{ page + 1 }}">older →</a>{% endif %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Career-Ops — clean technical job feed{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>A technical job feed with zero noise.</h1>
+  <p class="sub">
+    Jobs ingested from real pipelines, deduplicated into one canonical listing each,
+    freshness-tracked by first-seen evidence, and structured into role families —
+    so you can decide what's worth your time.
+  </p>
+  <div class="hero-actions">
+    <a class="btn primary" href="/jobs">Browse the feed</a>
+    <a class="btn" href="/roles">See role categories</a>
+  </div>
+  <div class="stats">
+    <div class="stat"><b>{{ stats.jobs }}</b><span>canonical jobs</span></div>
+    <div class="stat"><b>{{ stats.active }}</b><span>fresh / likely active</span></div>
+    <div class="stat"><b>{{ stats.companies }}</b><span>companies</span></div>
+    <div class="stat"><b>{{ stats.with_description }}</b><span>with full descriptions</span></div>
+    <div class="stat"><b>{{ stats.merged_jobs }}</b><span>dedup-merged listings</span></div>
+  </div>
+</section>
+
+<section class="howto">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><b>Pick a role family and experience band.</b> Nine focused families — GenAI, SDE, Data, Backend, ML, DL, C++, Forward Deployed, GTM — filtered by 0–1 / 1–2 / 2–3 / 3–4 YOE.</li>
+    <li><b>Browse the clean feed.</b> One card per real job. Reposts and cross-source duplicates are merged with their provenance expandable. Freshness comes from pipeline sightings, not "posted today" claims.</li>
+    <li><b>Open a job.</b> Structured required vs preferred skills, the exact classification reason, the preserved original description, and every source link — no invented requirements.</li>
+  </ol>
+</section>
+
+<section class="families-grid">
+  <h2>Role families</h2>
+  <div class="grid">
+    {% for f in families %}
+    <a class="card family-card" href="/jobs?family={{ f.slug }}">
+      <b>{{ f.name }}</b>
+      <span class="muted">{{ f.tagline }}</span>
+      <span class="count">{{ f.n }} job{{ '' if f.n == 1 else 's' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>Latest sightings</h2>
+  <div class="grid">
+    {% for j in latest %}
+    <a class="card job-mini" href="/jobs/{{ j.id }}">
+      <b>{{ j.title }}</b>
+      <span class="muted">{{ j.company }}{% if j.city %} · {{ j.city }}{% endif %}</span>
+      <span class="meta">first seen {{ j.first_seen }}{% if j.family_name %} · {{ j.family_name }}{% endif %}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

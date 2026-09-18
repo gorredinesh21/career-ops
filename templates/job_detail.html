@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} — {{ job.company }} — Career-Ops{% endblock %}
+{% block content %}
+<div class="detail">
+  <section class="main">
+    <div class="detail-head">
+      <h1>{{ job.title }}</h1>
+      <div class="muted">
+        {{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}
+        {% if job.work_model and job.work_model != 'unspecified' %} · {{ job.work_model }}{% endif %}
+      </div>
+      <div class="chips" style="margin-top:8px">
+        {% if job.family_name %}<span class="chip">{{ job.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified — in review queue</span>{% endif %}
+        {% if job.exp_stated %}<span class="chip">{{ job.exp_stated }} (as stated)</span>{% endif %}
+        {% if job.salary_text %}<span class="chip">{{ job.salary_text }}</span>{% endif %}
+        {% if job.applicants %}<span class="chip muted-chip">{{ job.applicants }} applicants when seen</span>{% endif %}
+      </div>
+    </div>
+
+    {% if request.query_params.get('feedback') == 'thanks' %}
+    <div class="flash">Report recorded. It is now visible in the ops review queue.</div>
+    {% endif %}
+
+    {% if skills %}
+    <div class="card">
+      <h2>Structured requirements</h2>
+      <p class="muted small">Extracted from the posting text by deterministic rules — nothing added.</p>
+      <div class="skillgroup"><h3>Required / mentioned as core</h3>
+        <div class="chips">
+        {% for s in skills if s.requirement == 'required' %}<span class="chip">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% if not (skills | selectattr('requirement', 'equalto', 'required') | list) %}<span class="muted small">none detected</span>{% endif %}
+        </div>
+      </div>
+      <div class="skillgroup"><h3>Preferred / nice-to-have</h3>
+        <div class="chips">
+        {% for s in skills if s.requirement == 'preferred' %}<span class="chip pref">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% if not (skills | selectattr('requirement', 'equalto', 'preferred') | list) %}<span class="muted small">none detected</span>{% endif %}
+        </div>
+      </div>
+      <div class="skillgroup"><h3>Inferred from prose</h3>
+        <div class="chips">
+        {% for s in skills if s.requirement == 'inferred' %}<span class="chip inferred">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% if not (skills | selectattr('requirement', 'equalto', 'inferred') | list) %}<span class="muted small">none</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if job.description %}
+    <div class="card">
+      <h2>Original posting text</h2>
+      <details open>
+        <summary class="muted small">Preserved as captured from the source on {{ job.last_seen }} (snapshot {{ snapshots }})</summary>
+        <pre class="jd">{{ job.description }}</pre>
+      </details>
+    </div>
+    {% else %}
+    <div class="card">
+      <h2>Original posting text</h2>
+      <p class="muted">The pipeline only sighted this job's card — no full description was captured.
+      We do not paraphrase or guess requirements we never saw. Open the source link for the posting.</p>
+    </div>
+    {% endif %}
+
+    {% if job.curator_notes %}
+    <div class="card">
+      <h2>Curator notes</h2>
+      <p class="muted small">From the feed-scan run that surfaced this job — clearly separated from the posting itself.</p>
+      <pre class="jd">{{ job.curator_notes }}</pre>
+    </div>
+    {% endif %}
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <h2>Freshness</h2>
+      <span class="badge fresh-{{ job.freshness }}">{{ job.freshness.replace('_',' ') }}</span>
+      <ul class="kv">
+        <li><span>first seen</span><b>{{ job.first_seen }}</b></li>
+        <li><span>last seen</span><b>{{ job.last_seen }}</b></li>
+        {% if job.posted_text %}<li><span>source claimed</span><b>{{ job.posted_text }}</b></li>{% endif %}
+      </ul>
+      <p class="muted small">{{ freshness_why }}</p>
+    </div>
+
+    <div class="card">
+      <h2>Why this classification</h2>
+      {% if job.family_name %}
+      <p><b>{{ job.family_name }}</b> · confidence {{ '%.0f'|format((job.family_confidence or 0) * 100) }}%</p>
+      {% else %}
+      <p><b>Unclassified</b></p>
+      {% endif %}
+      <p class="muted small">{{ job.family_reason }}</p>
+    </div>
+
+    <div class="card">
+      <h2>Sources &amp; provenance</h2>
+      <ul class="sources">
+        {% for s in sources %}
+        <li>
+          <span class="chip {{ 'merged' if sources|length > 1 else '' }}">{{ s.source_type }}</span>
+          {% if s.external_id %}<span class="muted small">#{{ s.external_id }}</span>{% endif %}
+          <div class="muted small">seen {{ s.first_seen }} → {{ s.last_seen }}{% if s.easy_apply %} · Easy Apply{% endif %}</div>
+          {% if s.url %}<a class="small" href="{{ s.url }}" target="_blank" rel="noopener noreferrer">original ↗</a>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if sources|length > 1 %}
+      <p class="muted small">These listings were merged into one canonical job (same company + matching title + same city).</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Actions</h2>
+      {% if job.apply_url %}
+      <a class="btn primary block" href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Apply at the source ↗</a>
+      {% endif %}
+      <p class="muted small">Applications happen at the original source. Career-Ops never auto-applies.</p>
+    </div>
+
+    <div class="card">
+      <h2>Report a problem</h2>
+      <form method="post" action="/jobs/{{ job.id }}/feedback" class="report">
+        <button class="btn ghost block" name="kind" value="stale">Looks stale / closed</button>
+        <button class="btn ghost block" name="kind" value="wrong_role">Wrong role family</button>
+        <button class="btn ghost block" name="kind" value="wrong_data">Wrong data</button>
+        <input type="text" name="note" placeholder="optional note" maxlength="200">
+      </form>
+    </div>
+
+    {% if feedback %}
+    <div class="card">
+      <h2>Recent reports</h2>
+      <ul class="sources">
+        {% for fb in feedback %}
+        <li><span class="chip muted-chip">{{ fb.kind.replace('_',' ') }}</span> <span class="muted small">{{ fb.created_at }}</span>
+        {% if fb.note %}<div class="muted small">{{ fb.note }}</div>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

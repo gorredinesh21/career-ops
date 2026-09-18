@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Career-Ops{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">Career<span>-</span>Ops</a>
+  <nav>
+    <a href="/jobs">Jobs</a>
+    <a href="/roles">Roles</a>
+    <a href="/ops">Ops</a>
+  </nav>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+<footer class="foot">
+  Career-Ops — job intelligence from real pipelines. Every job keeps its source.
+  Freshness = first-seen / last-seen evidence, not marketing dates.
+</footer>
+</body>
+</html>

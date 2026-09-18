@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Ops — Career-Ops{% endblock %}
+{% block content %}
+<h1>Ops dashboard</h1>
+<p class="muted">Ingestion and data-quality health. Everything on this page is measured,
+nothing is aspirational.</p>
+
+<div class="stats">
+  <div class="stat"><b>{{ stats.jobs }}</b><span>jobs</span></div>
+  <div class="stat"><b>{{ stats.sources }}</b><span>source records</span></div>
+  <div class="stat"><b>{{ stats.merged_jobs }}</b><span>merged (dedup)</span></div>
+  <div class="stat"><b>{{ stats.with_description }}</b><span>full descriptions</span></div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>Freshness distribution</h2>
+    <table class="table">
+      <thead><tr><th>State</th><th>Jobs</th></tr></thead>
+      <tbody>
+      {% for row in ops.freshness %}
+        <tr><td>{{ row.freshness.replace('_',' ') }}</td><td>{{ row.n }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">no jobs yet</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Classification health</h2>
+    <table class="table">
+      <thead><tr><th>Family</th><th>Jobs</th><th>Avg confidence</th></tr></thead>
+      <tbody>
+      {% for f in ops.families %}
+        <tr><td>{{ f.name }}</td><td>{{ f.n }}</td><td>{{ '%.0f'|format((f.conf or 0) * 100) }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Review queue — unclassified jobs ({{ ops.unclassified|length }} shown)</h2>
+  <p class="muted small">No family keywords matched. These stay honest rather than forced into a bucket.</p>
+  <table class="table">
+    <thead><tr><th>Job</th><th>Company</th><th></th></tr></thead>
+    <tbody>
+    {% for j in ops.unclassified %}
+      <tr><td>{{ j.title }}</td><td>{{ j.company }}</td><td><a class="small" href="/jobs/{{ j.id }}">open</a></td></tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">everything classified</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>Top cities</h2>
+    <table class="table">
+      {% for c in ops.cities %}
+      <tr><td>{{ c.city }}</td><td>{{ c.n }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="card">
+    <h2>Most-demanded skills</h2>
+    <div class="chips">
+      {% for s in ops.skills %}
+      <span class="chip">{{ s.skill }} · {{ s.n }}</span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Recent ingest runs</h2>
+  <table class="table">
+    <thead><tr><th>When</th><th>Seen</th><th>New</th><th>Updated</th><th>Merged</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for r in ops.runs %}
+      <tr>
+        <td>{{ r.started_at }}</td><td>{{ r.jobs_seen }}</td><td>{{ r.jobs_new }}</td>
+        <td>{{ r.jobs_updated }}</td><td>{{ r.sources_merged }}</td>
+        <td class="muted small">{{ r.notes[:120] if r.notes else '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>User reports (stale / wrong role / wrong data)</h2>
+  <table class="table">
+    <thead><tr><th>Job</th><th>Kind</th><th>Note</th><th>When</th></tr></thead>
+    <tbody>
+    {% for fb in ops.feedback %}
+      <tr>
+        <td><a class="small" href="/jobs/{{ fb.job_id }}">{{ fb.title or fb.job_id }}</a></td>
+        <td>{{ fb.kind.replace('_',' ') }}</td><td>{{ fb.note or '' }}</td><td class="muted small">{{ fb.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">no reports yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

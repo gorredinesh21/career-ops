@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Role categories — Career-Ops{% endblock %}
+{% block content %}
+<h1>Role families</h1>
+<p class="muted">A controlled taxonomy of nine launch families. New categories are added
+only after sustained demand crosses {{ threshold }} votes and ingestion quality checks pass —
+one burst of votes cannot create taxonomy debt.</p>
+
+<div class="grid">
+  {% for f in families %}
+  <a class="card family-card" href="/jobs?family={{ f.slug }}">
+    <b>{{ f.name }}</b>
+    <span class="muted">{{ f.tagline }}</span>
+    <span class="count">{{ f.n }} job{{ '' if f.n == 1 else 's' }} indexed</span>
+  </a>
+  {% endfor %}
+</div>
+
+<section class="voting">
+  <h2>Looking for another role?</h2>
+  <p class="muted">Request a role family the pipelines should index next. Votes are anonymous
+  (a random browser cookie), one per browser per role.</p>
+
+  <form method="post" action="/roles/request" class="inline-form">
+    <input type="text" name="role_name" placeholder="e.g. DevOps Engineer" maxlength="80" required>
+    <button class="btn primary" type="submit">Request role</button>
+  </form>
+
+  {% if requests %}
+  <table class="table">
+    <thead><tr><th>Requested role</th><th>Votes</th><th>Progress to review</th><th></th></tr></thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.role_name }}</td>
+        <td><b>{{ r.votes }}</b></td>
+        <td>
+          <div class="bar"><span style="width: {{ [r.votes * 100 / threshold, 100] | min }}%"></span></div>
+          <span class="muted small">{{ r.votes }} / {{ threshold }}{% if r.votes >= threshold %} — in review queue{% endif %}</span>
+        </td>
+        <td>
+          <form method="post" action="/roles/{{ r.id }}/vote">
+            <button class="btn small-btn" type="submit">+1 vote</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No requests yet — be the first.</p>
+  {% endif %}
+</section>
+{% endblock %}
