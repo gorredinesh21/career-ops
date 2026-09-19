@@ -1,11 +1,11 @@
 """Career-Ops web application (Phase 1: job intelligence + discovery)."""
 import hashlib
+import json
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import urlencode
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,6 +14,7 @@ from app import queries
 from app.db import get_db
 from app.freshness import freshness_explanation
 from app.normalize import collapse
+from app.resume import extract_pdf_text
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -115,7 +116,9 @@ def jobs(
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_detail(request: Request, job_id: int):
-    job = queries.get_job(db(), job_id)
+    conn = db()
+    job = queries.get_job(conn, job_id)
+    prof = queries.latest_profile(conn)
     if job is None:
         return templates.TemplateResponse(
             request=request, name="error.html",
@@ -132,6 +135,7 @@ def job_detail(request: Request, job_id: int):
             feedback=queries.job_feedback(db(), job_id),
             snapshots=queries.snapshot_count(db(), job_id),
             freshness_why=freshness_explanation(job["freshness"]),
+            fit=queries.job_fit_for_profile(db(), job_id, prof["id"]) if prof else None,
         ),
     )
 
@@ -193,3 +197,127 @@ def ops(request: Request):
         context=ctx(request, ops=queries.ops_dashboard(db()),
                     stats=queries.platform_stats(db())),
     )
+
+
+# ---------------------------------------------------------------- candidate profile (Module C v1)
+
+
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request):
+    conn = db()
+    prof = queries.latest_profile(conn)
+    skills = repos = []
+    affinity = []
+    if prof:
+        skills = queries.profile_skills(conn, prof["id"])
+        repos = queries.profile_repos(conn, prof["id"])
+        affinity = queries.profile_family_affinity(conn, prof["id"])
+    return templates.TemplateResponse(
+        request=request, name="profile.html",
+        context=ctx(request, profile=prof, skills=skills, repos=repos,
+                    affinity=affinity,
+                    depth_order=["production use", "independent build",
+                                 "working use", "repo evidence",
+                                 "listed in skills section", "mentioned", "exposure"]),
+    )
+
+
+def _store_profile(conn, raw_text: str, source: str, github_user: str = ""):
+    from app.resume import parse_resume, github_repos_for, skills_from_repos
+
+    conn.execute("DELETE FROM candidate_profile")
+    conn.execute("DELETE FROM candidate_skill")
+    conn.execute("DELETE FROM candidate_github_repo")
+    now = datetime.now().isoformat(timespec="seconds")
+    github_json, github_error = None, None
+    repos = []
+    if github_user:
+        try:
+            data = github_repos_for(github_user)
+            repos = data["repos"]
+            github_json = json.dumps(data, ensure_ascii=False)
+        except Exception as exc:  # visible, honest failure — no silent skip
+            github_error = str(exc)
+    cur = conn.execute(
+        "INSERT INTO candidate_profile (raw_text, source, github_user, github_json, "
+        "github_error, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+        (raw_text, source, github_user, github_json, github_error, now, now),
+    )
+    pid = cur.lastrowid
+    for skill, claims in parse_resume(raw_text).items():
+        for c in claims:
+            conn.execute(
+                "INSERT OR IGNORE INTO candidate_skill (profile_id, skill, section, "
+                "evidence, depth, confidence, origin) VALUES (?,?,?,?,?,?, 'resume')",
+                (pid, skill, c["section"], c["evidence"], c["depth"], c["confidence"]),
+            )
+    for skill, claims in skills_from_repos(repos).items():
+        for c in claims:
+            conn.execute(
+                "INSERT OR IGNORE INTO candidate_skill (profile_id, skill, section, "
+                "evidence, depth, confidence, origin) VALUES (?,?,?,?,?,?, 'github')",
+                (pid, skill, "github", c["evidence"], c["depth"], c["confidence"]),
+            )
+    for repo in repos:
+        conn.execute(
+            "INSERT OR IGNORE INTO candidate_github_repo (profile_id, name, description, "
+            "language, stars, pushed_at, url, topics, fork) VALUES (?,?,?,?,?,?,?,?,?)",
+            (pid, repo["name"], repo["description"], repo["language"], repo["stars"],
+             repo["pushed_at"], repo["url"], json.dumps(repo["topics"]), 1 if repo["fork"] else 0),
+        )
+    conn.commit()
+
+
+@app.post("/profile/upload")
+async def profile_upload(
+    request: Request,
+    resume_file: UploadFile = None,
+    resume_text: str = Form(""),
+    github_user: str = Form(""),
+):
+    raw = (resume_text or "").strip()
+    source = "paste"
+    if resume_file is not None and resume_file.filename:
+        blob = await resume_file.read()
+        name = resume_file.filename.lower()
+        if name.endswith(".pdf"):
+            try:
+                raw = extract_pdf_text(blob)
+            except Exception as exc:
+                return templates.TemplateResponse(
+                    request=request, name="error.html",
+                    context=ctx(request, code=422,
+                                message=f"Could not read that PDF: {exc}"),
+                    status_code=422,
+                )
+            source = f"upload:{resume_file.filename}"
+        elif name.endswith((".txt", ".md", ".tex")):
+            raw = blob.decode("utf-8", errors="replace")
+            source = f"upload:{resume_file.filename}"
+        else:
+            return templates.TemplateResponse(
+                request=request, name="error.html",
+                context=ctx(request, code=422,
+                            message="Unsupported file type. Paste the text, or upload .pdf / .txt / .md / .tex."),
+                status_code=422,
+            )
+    if not raw and not github_user:
+        return templates.TemplateResponse(
+            request=request, name="error.html",
+            context=ctx(request, code=422,
+                        message="Nothing to build a profile from — paste your resume text or upload a file."),
+            status_code=422,
+        )
+    conn = db()
+    _store_profile(conn, raw, source, (github_user or "").strip().lstrip("@"))
+    return RedirectResponse("/profile", status_code=303)
+
+
+@app.post("/profile/delete")
+def profile_delete():
+    conn = db()
+    conn.execute("DELETE FROM candidate_profile")
+    conn.execute("DELETE FROM candidate_skill")
+    conn.execute("DELETE FROM candidate_github_repo")
+    conn.commit()
+    return RedirectResponse("/profile", status_code=303)

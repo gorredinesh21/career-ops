@@ -21,6 +21,37 @@
     <div class="flash">Report recorded. It is now visible in the ops review queue.</div>
     {% endif %}
 
+    {% if fit %}
+    <div class="card">
+      <h2>Your evidence vs this job</h2>
+      <p class="muted small">Requirement-by-requirement comparison against your profile's
+      evidence — no percentage scores, no hiring predictions. "Missing" means your resume
+      and GitHub show no evidence yet; it does not mean you can't do it.</p>
+      <table class="table">
+        <thead><tr><th>Requirement</th><th>Status</th><th>Your evidence</th></tr></thead>
+        <tbody>
+        {% for r in fit %}
+        <tr>
+          <td><b>{{ r.skill }}</b> <span class="muted small">({{ r.requirement }})</span></td>
+          <td>
+            {% if r.status == 'match' %}<span class="chip">{{ r.depth }}</span>
+            {% elif r.status == 'weak' %}<span class="chip inferred">{{ r.depth }}</span>
+            {% else %}<span class="chip muted-chip">no evidence yet</span>{% endif %}
+          </td>
+          <td class="muted small">{{ r.evidence[:140] }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif skills %}
+    <div class="card">
+      <h2>Your evidence vs this job</h2>
+      <p class="muted">Build a <a href="/profile">candidate profile</a> (resume + optional
+      GitHub) to see which of this job's requirements your evidence already covers.</p>
+    </div>
+    {% endif %}
+
     {% if skills %}
     <div class="card">
       <h2>Structured requirements</h2>

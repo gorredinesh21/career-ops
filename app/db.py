@@ -113,6 +113,42 @@ CREATE TABLE IF NOT EXISTS ingest_run (
     sources_merged INTEGER DEFAULT 0,
     notes TEXT
 );
+
+CREATE TABLE IF NOT EXISTS candidate_profile (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT 'Local profile',
+    raw_text TEXT NOT NULL,
+    source TEXT,
+    github_user TEXT,
+    github_json TEXT,
+    github_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS candidate_skill (
+    profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
+    skill TEXT NOT NULL,
+    section TEXT,
+    evidence TEXT,
+    depth TEXT,
+    confidence REAL,
+    origin TEXT NOT NULL DEFAULT 'resume',        -- resume | github
+    UNIQUE(profile_id, skill, origin, evidence)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_github_repo (
+    profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    language TEXT,
+    stars INTEGER DEFAULT 0,
+    pushed_at TEXT,
+    url TEXT,
+    topics TEXT,
+    fork INTEGER DEFAULT 0,
+    UNIQUE(profile_id, name)
+);
 """
 
 

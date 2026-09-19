@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Your profile — Career-Ops{% endblock %}
+{% block content %}
+<h1>Candidate profile</h1>
+<p class="muted">Evidence-backed skill graph built from your resume and (optionally) your
+public GitHub. Every skill below shows the exact line it came from — nothing is inferred
+beyond the text you provide. This is a local, single-user profile for now; accounts come
+with Phase 2.</p>
+
+{% if not profile %}
+<div class="card">
+  <h2>Build your profile</h2>
+  <form method="post" action="/profile/upload" enctype="multipart/form-data" class="profile-form">
+    <label>Resume file (.pdf / .txt / .md / .tex)
+      <input type="file" name="resume_file" accept=".pdf,.txt,.md,.tex">
+    </label>
+    <label>…or paste resume text
+      <textarea name="resume_text" rows="8" placeholder="Paste your resume text here"></textarea>
+    </label>
+    <label>GitHub username (optional — public repos only, analyzed via the GitHub API)
+      <input type="text" name="github_user" placeholder="e.g. gorredinesh21">
+    </label>
+    <button class="btn primary" type="submit">Build profile</button>
+  </form>
+</div>
+
+{% else %}
+<div class="stats">
+  <div class="stat"><b>{{ skills|length }}</b><span>skills with evidence</span></div>
+  <div class="stat"><b>{{ repos|length }}</b><span>public repos analyzed</span></div>
+  <div class="stat"><b>{{ affinity[0].matched_skills if affinity else 0 }}</b><span>skills demanded by top family</span></div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>Profile facts</h2>
+    <ul class="kv">
+      <li><span>source</span><b>{{ profile.source }}</b></li>
+      <li><span>built</span><b>{{ profile.updated_at[:16] }}</b></li>
+      <li><span>github</span><b>{{ profile.github_user or '—' }}</b></li>
+    </ul>
+    {% if profile.github_error %}
+    <div class="flash warn">GitHub analysis failed: {{ profile.github_error }}. Resume evidence is unaffected.</div>
+    {% endif %}
+    <form method="post" action="/profile/delete" onsubmit="return confirm('Delete profile and all derived analysis?')">
+      <button class="btn ghost" type="submit">Delete profile (privacy control)</button>
+    </form>
+    <form method="post" action="/profile/upload" enctype="multipart/form-data" style="margin-top:10px">
+      <input type="hidden" name="resume_text" value="">
+      <label class="small">Rebuild with a different resume / GitHub
+        <input type="text" name="github_user" placeholder="github username" value="{{ profile.github_user or '' }}">
+      </label>
+      <button class="btn" type="submit">Rebuild</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Role families your evidence supports</h2>
+    <p class="muted small">Measured against live postings: how many of each family's
+    demanded skills your evidence covers.</p>
+    <table class="table">
+      <thead><tr><th>Family</th><th>Your skills in demand</th><th>Family demands</th></tr></thead>
+      <tbody>
+      {% for a in affinity[:6] %}
+        <tr>
+          <td><a href="/jobs?family={{ a.slug }}">{{ a.name }}</a></td>
+          <td><b>{{ a.matched_skills }}</b></td>
+          <td class="muted">{{ a.family_skills }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">no overlap measured yet</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Skill graph — strongest evidence first</h2>
+  {% for depth in depth_order %}
+    {% set group = skills | selectattr('depth', 'equalto', depth) | list %}
+    {% if group %}
+    <div class="skillgroup">
+      <h3>{{ depth }} ({{ group|length }})</h3>
+      <table class="table">
+        <thead><tr><th>Skill</th><th>Where</th><th>Evidence line</th><th>Conf.</th></tr></thead>
+        <tbody>
+        {% for s in group %}
+          <tr>
+            <td><b>{{ s.skill }}</b></td>
+            <td class="muted">{{ s.section }}</td>
+            <td class="muted small">{{ s.evidence[:160] }}</td>
+            <td>{{ '%.0f'|format((s.confidence or 0) * 100) }}%</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endfor %}
+</div>
+
+{% if repos %}
+<div class="card">
+  <h2>GitHub — {{ profile.github_user }}</h2>
+  <p class="muted small">Public repos via the GitHub API, sorted by last push. Stars are
+  context, never treated as proficiency. Original (non-fork) repos weigh more in your
+  evidence than forks.</p>
+  <table class="table">
+    <thead><tr><th>Repo</th><th>Language</th><th>★</th><th>Last push</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for r in repos %}
+      <tr>
+        <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>{% if r.fork %} <span class="chip muted-chip">fork</span>{% endif %}</td>
+        <td>{{ r.language }}</td>
+        <td>{{ r.stars }}</td>
+        <td class="muted">{{ r.pushed_at }}</td>
+        <td class="muted small">{{ (r.description or '')[:100] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

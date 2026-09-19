@@ -154,3 +154,11 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
   .layout, .detail, .two-col { grid-template-columns: 1fr; }
   .filters { position: static; }
 }
+
+/* candidate profile */
+.profile-form label { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
+.profile-form input[type="text"], .profile-form input[type="file"], .profile-form textarea {
+  width: 100%; margin-top: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; font-size: 14px;
+  font-family: inherit; background: #fff; color: var(--text);
+}
+.flash.warn { background: #fef2f2; border-color: #fecaca; color: var(--bad); }

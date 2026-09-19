@@ -14,6 +14,7 @@ Idempotent: re-running updates last_seen, merges duplicate sources, appends
 job snapshots when the captured text changed.
 """
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,8 @@ from app.db import connect, init_db
 from app.freshness import compute_freshness
 from app.normalize import (
     collapse, extract_city, normalize_card, normalize_ledger_title,
-    parse_applicants, parse_experience, parse_salary, slugify,
+    parse_applicants, parse_experience, parse_salary, parse_work_model,
+    slugify,
 )
 
 DEFAULT_LEDGER = Path.home() / "Desktop" / "LinkedIn Daily" / "job_history.jsonl"
@@ -370,6 +372,169 @@ class Ingestor:
                 raw_title=role,
             )
 
+    # -- Excel sources ----------------------------------------------------------
+
+    def _apply_scored_category(self, job_id: int, category: str) -> None:
+        """The scored Excels carry a human-curated category column; it outranks
+        the keyword classifier when the name maps to a taxonomy family."""
+        name = collapse(category)
+        if not name:
+            return
+        row = self.conn.execute(
+            "SELECT id FROM role_family WHERE lower(name) = lower(?)", (name,)
+        ).fetchone()
+        if row:
+            self.conn.execute(
+                "UPDATE job SET role_family_id = ?, family_confidence = 0.95, "
+                "family_reason = 'category from scored Excel (daily pipeline)' WHERE id = ?",
+                (row["id"], job_id),
+            )
+
+    def ingest_alert_excel(self, path: Path) -> None:
+        """Scored-alert Excel: 'All jobs' sheet (the Shortlist sheet is a
+        subset). Shares LinkedIn Job IDs with the alert-details source, so
+        rows merge into existing canonical jobs and enrich them."""
+        import openpyxl
+
+        seen_date = "2026-09-18" if "18" in path.stem else "2026-09-19"
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        if "All jobs" not in wb.sheetnames:
+            self.stats["errors"].append(f"{path.name}: no 'All jobs' sheet")
+            wb.close()
+            return
+        ws = wb["All jobs"]
+        rows = ws.iter_rows(values_only=True)
+        header = [collapse(str(h or "")) for h in next(rows, ())]
+        idx = {name: i for i, name in enumerate(header)}
+
+        def cell(row, col):
+            i = idx.get(col)
+            if i is None or i >= len(row) or row[i] is None:
+                return ""
+            return str(row[i]).strip()
+
+        for row in rows:
+            job_id = cell(row, "Job ID")
+            title = cell(row, "Title")
+            if not job_id or not title:
+                continue
+            desc = cell(row, "Job description (full)")
+            loc = cell(row, "Location")
+            applicants = None
+            try:
+                applicants = int(float(cell(row, "Applicants"))) or None
+            except ValueError:
+                applicants = None
+            raw = {
+                "excel": path.name, "jobId": job_id, "title": title,
+                "company": cell(row, "Company"), "category": cell(row, "Category"),
+                "fit": cell(row, "Fit"), "why": cell(row, "Why it fits"),
+                "score": cell(row, "Score"), "skillsMatched": cell(row, "Skills matched"),
+            }
+            job_db_id = self.ingest_record(
+                source_type="alert",
+                external_id=job_id,
+                title=title,
+                company=cell(row, "Company"),
+                location=loc,
+                city=extract_city(loc),
+                work_model=parse_work_model(loc),
+                description=desc,
+                apply_url=cell(row, "Job link"),
+                seen_date=seen_date,
+                salary_text=parse_salary(desc),
+                applicants=applicants,
+                posted_text=cell(row, "Posted"),
+                easy_apply=cell(row, "Easy Apply").lower().startswith("y"),
+                raw=raw,
+                raw_title=title,
+            )
+            if job_db_id:
+                self._apply_scored_category(job_db_id, cell(row, "Category"))
+        wb.close()
+
+    def ingest_feed_excel(self, path: Path) -> None:
+        """Feed-scan Excel: curated 1-2 YOE jobs with live status and the
+        official job description where captured. Supersedes the older
+        qualifying_jobs.json with richer data."""
+        import openpyxl
+
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        sheet = next((s for s in wb.sheetnames if s.lower().startswith("jobs from feed")), None)
+        if sheet is None:
+            self.stats["errors"].append(f"{path.name}: no feed jobs sheet")
+            wb.close()
+            return
+        rows = wb[sheet].iter_rows(values_only=True)
+        header = [collapse(str(h or "")) for h in next(rows, ())]
+        idx = {name: i for i, name in enumerate(header)}
+
+        def col_index(col: str) -> int:
+            if col in idx:
+                return idx[col]
+            # Excel headers carry run-specific suffixes (e.g. 'Live status
+            # (checked 18 Sep ~7:30am)') — fall back to prefix matching.
+            for name, i in idx.items():
+                if name.startswith(col):
+                    return i
+            return -1
+
+        def cell(row, col):
+            i = col_index(col)
+            if i < 0 or i >= len(row) or row[i] is None:
+                return ""
+            return str(row[i]).strip()
+
+        for row in rows:
+            company = cell(row, "Company")
+            role = cell(row, "Role / Title")
+            if not company or not role:
+                continue
+            loc = cell(row, "Location")
+            live = cell(row, "Live status")
+            notes = "\n\n".join(
+                f"{label}: {cell(row, col)}"
+                for label, col in [
+                    ("Why it fits you", "Why it fits you"),
+                    ("How to apply / referral", "How to apply / Referral"),
+                    ("Poster", "Posted by (connection)"),
+                    ("Research", "About the company (research)"),
+                    ("Notes / cautions", "Notes / Cautions"),
+                    ("Live status", "Live status"),
+                ]
+                if cell(row, col)
+            )
+            raw = {
+                "excel": path.name, "company": company, "role": role,
+                "liveStatus": live, "postAge": cell(row, "Post age"),
+            }
+            job_db_id = self.ingest_record(
+                source_type="curated",
+                external_id=slugify(f"{company}-{role}"),
+                title=role,
+                company=company,
+                location=loc,
+                city=extract_city(loc),
+                work_model=parse_work_model(loc),
+                description=cell(row, "Job description (official"),
+                apply_url=cell(row, "Apply link"),
+                seen_date="2026-09-18",
+                salary_text=parse_salary(cell(row, "Salary / CTC")) or cell(row, "Salary / CTC"),
+                curator_notes=notes,
+                raw=raw,
+                raw_title=role,
+            )
+            if job_db_id and live:
+                if live.upper().startswith("CLOSED"):
+                    self.conn.execute(
+                        "UPDATE job SET freshness = 'closed' WHERE id = ?", (job_db_id,)
+                    )
+                elif live.upper().startswith("OPEN"):
+                    self.conn.execute(
+                        "UPDATE job SET freshness = 'active' WHERE id = ?", (job_db_id,)
+                    )
+        wb.close()
+
     def recompute_freshness(self) -> None:
         rows = self.conn.execute("SELECT id, first_seen, last_seen FROM job").fetchall()
         for row in rows:
@@ -378,16 +543,29 @@ class Ingestor:
                 "UPDATE job SET freshness = ? WHERE id = ?", (state, row["id"])
             )
 
-    def run(self, ledger: Path, daily_root: Path, qualifying: Path) -> dict:
+    def run(self, ledger: Path, daily_root: Path, qualifying: Path,
+            alert_excels=None, feed_excel=None) -> dict:
         cur = self.conn.execute(
             "INSERT INTO ingest_run (started_at, sources) VALUES (?, ?)",
-            (now_iso(), f"ledger={ledger}; daily={daily_root}; qualifying={qualifying}"),
+            (now_iso(), f"ledger={ledger}; daily={daily_root}; qualifying={qualifying}; "
+                        f"alert_excels={list(map(str, alert_excels or []))}; feed_excel={feed_excel}"),
         )
         run_id = cur.lastrowid
         self.ingest_alert_details(daily_root)
         self.ingest_ledger(ledger)
         self.ingest_qualifying(qualifying)
+        for xl in alert_excels or []:
+            if Path(xl).exists():
+                self.ingest_alert_excel(Path(xl))
+            else:
+                self.stats["errors"].append(f"alert excel missing: {xl}")
         self.recompute_freshness()
+        # Feed excel runs last so its human-verified live status (OPEN/CLOSED)
+        # is not overwritten by the date-based freshness recomputation.
+        if feed_excel and Path(feed_excel).exists():
+            self.ingest_feed_excel(Path(feed_excel))
+        elif feed_excel:
+            self.stats["errors"].append(f"feed excel missing: {feed_excel}")
         self.conn.execute(
             "UPDATE ingest_run SET finished_at = ?, jobs_seen = ?, jobs_new = ?, "
             "jobs_updated = ?, sources_merged = ?, notes = ? WHERE id = ?",
@@ -404,9 +582,12 @@ def main(argv=None) -> int:
     ledger = Path(argv[0]) if len(argv) > 0 else DEFAULT_LEDGER
     daily = Path(argv[1]) if len(argv) > 1 else DEFAULT_DAILY_GLOB
     qualifying = Path(argv[2]) if len(argv) > 2 else DEFAULT_QUALIFYING
+    excel_dir = Path.home() / "Desktop" / "Job Hunt Excels"
+    alert_excels = sorted(excel_dir.glob("linkedin_alerts_jobs_scored*.xlsx"))
+    feed_excel = excel_dir / "linkedin_feed_jobs_1-2YOE.xlsx"
     conn = connect()
     init_db(conn)
-    stats = Ingestor(conn).run(ledger, daily, qualifying)
+    stats = Ingestor(conn).run(ledger, daily, qualifying, alert_excels, feed_excel)
     print(json.dumps(stats, indent=2))
     return 0
 

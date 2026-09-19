@@ -152,3 +152,74 @@ def role_requests(conn):
         "FROM role_request r LEFT JOIN role_vote v ON v.request_id = r.id "
         "GROUP BY r.id ORDER BY votes DESC, r.created_at"
     ).fetchall()
+
+
+# ---------------------------------------------------------------- candidate
+
+
+def latest_profile(conn):
+    return conn.execute(
+        "SELECT * FROM candidate_profile ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+
+def profile_skills(conn, profile_id: int):
+    return conn.execute(
+        "SELECT * FROM candidate_skill WHERE profile_id = ? ORDER BY skill", (profile_id,)
+    ).fetchall()
+
+
+def profile_repos(conn, profile_id: int):
+    return conn.execute(
+        "SELECT * FROM candidate_github_repo WHERE profile_id = ? "
+        "ORDER BY pushed_at DESC LIMIT 50", (profile_id,)
+    ).fetchall()
+
+
+def profile_family_affinity(conn, profile_id: int):
+    """Which role families this profile's skills show up in most, measured as
+    demand for the profile's skills among live postings of that family."""
+    return conn.execute(
+        """
+        SELECT f.name, f.slug,
+               COUNT(DISTINCT js.skill) AS matched_skills,
+               (SELECT COUNT(DISTINCT skill) FROM job_skill
+                 WHERE job_id IN (SELECT id FROM job WHERE role_family_id = f.id)) AS family_skills
+        FROM role_family f
+        CROSS JOIN candidate_skill cs ON cs.profile_id = ?
+        JOIN job_skill js ON lower(js.skill) = lower(cs.skill)
+        JOIN job j ON j.id = js.job_id AND j.role_family_id = f.id
+        GROUP BY f.id
+        ORDER BY matched_skills DESC
+        """,
+        (profile_id,),
+    ).fetchall()
+
+
+def job_fit_for_profile(conn, job_id: int, profile_id: int):
+    """Requirement-by-requirement evidence comparison for one job vs the
+    profile. Returns list of {skill, requirement, status, depth, evidence}."""
+    reqs = conn.execute(
+        "SELECT skill, requirement FROM job_skill WHERE job_id = ? ORDER BY requirement, skill",
+        (job_id,),
+    ).fetchall()
+    skills = conn.execute(
+        "SELECT skill, depth, evidence, confidence FROM candidate_skill WHERE profile_id = ?",
+        (profile_id,),
+    ).fetchall()
+    by_name = {}
+    for s in skills:
+        cur = by_name.get(s["skill"])
+        if cur is None or (s["confidence"] or 0) > (cur["confidence"] or 0):
+            by_name[s["skill"]] = s
+    out = []
+    for r in reqs:
+        hit = by_name.get(r["skill"])
+        if hit:
+            status = "match" if hit["confidence"] and hit["confidence"] >= 0.55 else "weak"
+            out.append({"skill": r["skill"], "requirement": r["requirement"],
+                        "status": status, "depth": hit["depth"], "evidence": hit["evidence"]})
+        else:
+            out.append({"skill": r["skill"], "requirement": r["requirement"],
+                        "status": "missing", "depth": "", "evidence": ""})
+    return out
