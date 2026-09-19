@@ -9,6 +9,7 @@ it stored next to the claim.
 import re
 
 from app.classify import SKILLS
+from app.normalize import collapse
 
 SECTION_HEADERS = [
     (r"^(work\s+|professional\s+)?experience\b", "experience"),
@@ -164,11 +165,11 @@ def skills_from_repos(repos: list) -> dict:
 
 
 DEGREE_PATTERNS = [
-    r"(?:b\.?\s?tech|b\.?\s?e\.?\b|bachelor(?:'s)?\s+of\s+(?:technology|engineering)|dual\s+degree)",
-    r"(?:m\.?\s?tech|m\.?\s?e\.?\b|m\.?\s?s\.?\b|master(?:'s)?\s+of\s+(?:science|technology|engineering)|mba)",
-    r"(?:ph\.?\s?d\.?\b|doctorate)",
-    r"(?:b\.?\s?sc|bca|b\.?com|bba)",
-    r"(?:m\.?\s?sc|mca)",
+    r"\b(?:b\.?\s?tech|b\.?\s?e\.?\b|bachelor(?:'s)?\s+of\s+(?:technology|engineering)|dual\s+degree)\b",
+    r"\b(?:m\.?\s?tech|m\.?\s?e\.?\b|m\.?\s?s\.?\b|master(?:'s)?\s+of\s+(?:science|technology|engineering)|mba)\b",
+    r"\b(?:ph\.?\s?d\.?\b|doctorate)\b",
+    r"\b(?:b\.?\s?sc|bca|b\.?com|bba)\b",
+    r"\b(?:m\.?\s?sc|mca)\b",
 ]
 DEGREE_NAMES = ["B.Tech/BE", "M.Tech/MS/MBA", "PhD", "BSc/BCA/BCom", "MSc/MCA"]
 
@@ -195,6 +196,8 @@ def parse_education(text: str) -> list:
                 current = None
                 continue
             section.append(line)
+    # First pass: one entry per line that carries a degree or an institute.
+    entries = []
     for line in section:
         degree = next((name for i, pat in enumerate(DEGREE_PATTERNS)
                        if re.search(pat, line, re.I) and (name := DEGREE_NAMES[i]) is not None), None)
@@ -202,8 +205,25 @@ def parse_education(text: str) -> list:
         m = re.search(r"([A-Z][A-Za-z&.,'\- ]{6,70}(?:Institute|University|College|School|IIT|ISM|NIT|IIIT)[A-Za-z&.,'\- ]*)", line)
         if m:
             institute = collapse(m.group(1))
+            # the greedy capture can swallow the degree phrase before the
+            # institute name ("B.Tech in CSE, IIT Dhanbad") — drop leading
+            # segments that are degree/major text, keep the rest
+            parts = [p.strip() for p in institute.split(",") if p.strip()]
+            kept = []
+            for p in parts:
+                if kept or not (
+                    any(re.search(pat, p, re.I) for pat in DEGREE_PATTERNS)
+                    or re.match(r"^(in|of)\b", p, re.I)
+                ):
+                    kept.append(p)
+            institute = ", ".join(kept) if kept else institute
+            # institute lines often glue the dates on: "IIT (ISM), DhanbadDec 2021 – May 2025"
+            glue = re.search(r"([A-Za-z])(?:Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov)\s*20\d{2}", institute)
+            if glue:
+                institute = institute[:glue.start() + 1]
         years = ""
-        ym = re.search(r"(20\d{2})\s*(?:-|–|to)\s*(20\d{2}|present|ongoing)", line, re.I)
+        ym = re.search(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*?(20\d{2})\s*(?:-|–|to)\s*(?:[a-z]*\.?\s*?)?(20\d{2}|present|ongoing)"
+                       r"|(20\d{2})\s*(?:-|–|to)\s*(?:[a-z]*\.?\s*?)?(20\d{2}|present|ongoing)", line, re.I)
         if ym:
             years = ym.group(0)
         tier = "Other"
@@ -211,11 +231,38 @@ def parse_education(text: str) -> list:
             if re.search(pat, line, re.I):
                 tier = label
                 break
-        key = (degree or "", institute)
-        if degree and key not in seen:
+        if degree or institute:
+            entries.append({"degree": degree, "institution": institute,
+                            "years": years, "classification": tier, "line": line[:160]})
+
+    # Second pass: resumes often split the pair across two lines ("Indian
+    # Institute of Technology (ISM), Dhanbad" then "Bachelor of Technology
+    # in CSE ..."). Merge an institute-only entry with the adjacent
+    # degree-only entry, in either order.
+    merged = []
+    i = 0
+    while i < len(entries):
+        e = entries[i]
+        nxt = entries[i + 1] if i + 1 < len(entries) else None
+        if e["degree"] and not e["institution"] and nxt and nxt["institution"] and not nxt["degree"]:
+            e["institution"], e["classification"] = nxt["institution"], nxt["classification"]
+            e["years"] = e["years"] or nxt["years"]
+            i += 2
+        elif not e["degree"] and e["institution"] and nxt and nxt["degree"] and not nxt["institution"]:
+            nxt["institution"], nxt["classification"] = e["institution"], e["classification"]
+            nxt["years"] = nxt["years"] or e["years"]
+            i += 2
+            e = nxt
+        else:
+            i += 1
+        merged.append(e)
+
+    out, seen = [], set()
+    for e in merged:
+        key = (e["degree"] or "", e["institution"])
+        if e["degree"] and key not in seen:
             seen.add(key)
-            out.append({"degree": degree, "institution": institute,
-                        "years": years, "classification": tier, "line": line[:160]})
+            out.append(e)
     return out
 
 

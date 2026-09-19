@@ -2,6 +2,7 @@
 applications, alerts, agent, accounts."""
 import hashlib
 import json
+import time
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -48,18 +49,56 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 @app.on_event("startup")
 def startup() -> None:
-    """One-time boot: seed the persistent DB if empty, create schema, and
-    refresh job data from the baked snapshot (user data is never touched)."""
+    """One-time boot: restore the newest healthy GCS backup (or seed a fresh
+    DB), create schema, refresh job data from the baked snapshot (user data
+    is never touched), then start the async backup loop."""
+    from app import storage
+    from app.config import DB_PATH, GCS_BUCKET, SEED_DB_PATH
     from app.db import connect, init_db
     from app.sync import ensure_db, sync_jobs_from_seed
-    from app.config import DB_PATH, SEED_DB_PATH
 
-    ensure_db(DB_PATH, SEED_DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    backup = storage.configure(DB_PATH, GCS_BUCKET)
+    restored = backup.restore() if backup else False
+    if not restored and DB_PATH.exists() and not storage.db_is_healthy(DB_PATH):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        DB_PATH.rename(DB_PATH.parent / f"{DB_PATH.name}.bad-{stamp}")
+        print(f"[startup] local db unhealthy; moved aside", flush=True)
+    if not restored and not DB_PATH.exists():
+        ensure_db(DB_PATH, SEED_DB_PATH)
     conn = connect()
     init_db(conn)
     synced = sync_jobs_from_seed(conn, SEED_DB_PATH)
     conn.close()
-    print(f"[startup] db ready at {DB_PATH}; jobs synced from seed: {synced}", flush=True)
+    if backup:
+        backup.start()
+        backup.mark_dirty()  # persist the post-sync state immediately
+    print(f"[startup] db ready at {DB_PATH} (restored_from_backup={restored}); "
+          f"jobs synced from seed: {synced}", flush=True)
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    from app import storage
+
+    if storage.active():
+        storage.active().flush_now()
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Any unhandled failure renders the honest error page (with the reason)
+    instead of an opaque 500 — errors stay visible, never silent."""
+    import traceback
+
+    print("".join(traceback.format_exception(exc)), flush=True)
+    return templates.TemplateResponse(
+        "error.html",
+        {"request": request, "code": 500,
+         "message": f"Something broke on this page ({type(exc).__name__}). "
+                    "The error was logged — try again in a minute."},
+        status_code=500,
+    )
 
 
 def db():
@@ -404,9 +443,14 @@ def _store_profile(conn, ukey: str, raw_text: str, source: str, github_user: str
     from app.resume import (fetch_portfolio, github_repos_for, parse_education,
                             parse_resume, skills_from_repos)
 
+    # children first — deleting the parent row while skills/repos/etc. still
+    # reference it fails the FK constraint (re-upload used to 500 here)
+    for child in ("candidate_skill", "candidate_github_repo", "candidate_education",
+                  "candidate_review", "candidate_portfolio"):
+        conn.execute(
+            f"DELETE FROM {child} WHERE profile_id IN "
+            f"(SELECT id FROM candidate_profile WHERE user_key = ?)", (ukey,))
     conn.execute("DELETE FROM candidate_profile WHERE user_key = ?", (ukey,))
-    conn.execute("DELETE FROM candidate_skill WHERE profile_id NOT IN (SELECT id FROM candidate_profile)")
-    conn.execute("DELETE FROM candidate_github_repo WHERE profile_id NOT IN (SELECT id FROM candidate_profile)")
     now = datetime.now().isoformat(timespec="seconds")
     github_json, github_error, repos = None, None, []
     if github_user:
@@ -619,12 +663,11 @@ def profile_delete(request: Request):
     prof = queries.latest_profile(conn, ukey)
     with write_txn() as wconn:
         if prof:
+            # children before parent — FK constraint fails otherwise
+            for child in ("candidate_skill", "candidate_github_repo", "candidate_education",
+                          "candidate_review", "candidate_portfolio"):
+                wconn.execute(f"DELETE FROM {child} WHERE profile_id = ?", (prof["id"],))
             wconn.execute("DELETE FROM candidate_profile WHERE id = ?", (prof["id"],))
-            wconn.execute("DELETE FROM candidate_skill WHERE profile_id = ?", (prof["id"],))
-            wconn.execute("DELETE FROM candidate_github_repo WHERE profile_id = ?", (prof["id"],))
-            wconn.execute("DELETE FROM candidate_education WHERE profile_id = ?", (prof["id"],))
-            wconn.execute("DELETE FROM candidate_review WHERE profile_id = ?", (prof["id"],))
-            wconn.execute("DELETE FROM candidate_portfolio WHERE profile_id = ?", (prof["id"],))
         wconn.execute("DELETE FROM application_event WHERE user_key = ?", (ukey,))
     return RedirectResponse("/profile", status_code=303)
 

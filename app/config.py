@@ -4,10 +4,16 @@ import os
 import secrets
 from pathlib import Path
 
-# Where the SQLite database lives. In Cloud Run this points at a GCS-backed
-# persistent volume mount so user data survives redeploys.
+# Where the SQLite database lives. ALWAYS local disk — SQLite must never sit
+# on a network filesystem (gcsfuse corrupted our first deployment). On Cloud
+# Run this is ephemeral container disk; durability comes from the GCS backup
+# below, which restores on boot and uploads after every write.
 DB_PATH = Path(os.environ.get("CAREEROPS_DB",
                               Path(__file__).resolve().parent.parent / "data" / "careerops.db"))
+
+# When set, every committed write is backed up to
+# gs://<bucket>/<db filename> asynchronously and restored on boot.
+GCS_BUCKET = os.environ.get("CAREEROPS_GCS_BUCKET", "").strip()
 
 # Jobs-only snapshot baked into the container image; merged into the live DB
 # at startup so redeploying refreshes jobs without touching user data.

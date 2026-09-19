@@ -280,7 +280,8 @@ def get_db() -> sqlite3.Connection:
 def write_txn():
     """All writes go through one in-process lock: SQLite write transactions
     are microseconds, and serializing them removes reader/writer contention
-    (SQLITE_BUSY) completely for a single-instance deployment."""
+    (SQLITE_BUSY) completely for a single-instance deployment. Every
+    successful commit schedules the async GCS backup."""
     with _write_lock:
         conn = get_db()
         try:
@@ -289,3 +290,6 @@ def write_txn():
         except Exception:
             conn.rollback()
             raise
+        from app import storage
+
+        storage.mark_dirty()

@@ -291,3 +291,25 @@ def test_gap_actions_type_presentation_vs_evidence():
     assert "evidence gap" in by_skill["Spark"][1]
     # never encourages stuffing: recommendation must push real evidence, not adding terms
     assert "project" in by_skill["Spark"][2]
+
+
+# --- regression: resume upload crashed with NameError 'collapse' (2026-09-19 live) ---
+
+def test_parse_education_iit_line_no_nameerror():
+    from app.resume import parse_education
+    text = """Education
+B.Tech in Computer Science and Engineering, Indian Institute of Technology (Indian School of Mines), Dhanbad, 2016 - 2020
+Skills
+Python, SQL"""
+    edu = parse_education(text)
+    assert len(edu) == 1
+    assert "Indian Institute" in edu[0]["institution"]
+    assert edu[0]["classification"] == "IIT / ISM (national institute)"
+    assert "B.Tech" not in edu[0]["institution"]
+
+
+def test_fetch_portfolio_collapse_import():
+    """fetch_portfolio also used collapse; import must resolve (no network needed)."""
+    import app.resume as r
+    from app.normalize import collapse as _c  # noqa: F401
+    assert "collapse" in dir(r)
