@@ -158,3 +158,131 @@ def skills_from_repos(repos: list) -> dict:
                     "confidence": 0.6,
                 })
     return claims
+
+
+# ---------------------------------------------------------------- education
+
+
+DEGREE_PATTERNS = [
+    r"(?:b\.?\s?tech|b\.?\s?e\.?\b|bachelor(?:'s)?\s+of\s+(?:technology|engineering)|dual\s+degree)",
+    r"(?:m\.?\s?tech|m\.?\s?e\.?\b|m\.?\s?s\.?\b|master(?:'s)?\s+of\s+(?:science|technology|engineering)|mba)",
+    r"(?:ph\.?\s?d\.?\b|doctorate)",
+    r"(?:b\.?\s?sc|bca|b\.?com|bba)",
+    r"(?:m\.?\s?sc|mca)",
+]
+DEGREE_NAMES = ["B.Tech/BE", "M.Tech/MS/MBA", "PhD", "BSc/BCA/BCom", "MSc/MCA"]
+
+INSTITUTE_TIERS = [
+    (r"indian\s+institute\s+of\s+technology|\biit\b|ism\s+dhanbad", "IIT / ISM (national institute)"),
+    (r"national\s+institute\s+of\s+technology|\bnit\b|iiit", "NIT / IIIT"),
+    (r"university|college|institute|school\s+of", "University / college"),
+]
+
+
+def parse_education(text: str) -> list:
+    """Extract (degree, institution, years, classification) from the education
+    section. Deterministic; anything unparsed stays out rather than guessed."""
+    out, seen = [], set()
+    section = []
+    current = None
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if len(line) < 60 and re.search(r"^education\b|^(academic|academics)\b", line, re.I):
+            current = "edu"
+            continue
+        if current == "edu":
+            if len(line) < 60 and re.search(r"^(skills|experience|projects|certifications?)\b", line, re.I):
+                current = None
+                continue
+            section.append(line)
+    for line in section:
+        degree = next((name for i, pat in enumerate(DEGREE_PATTERNS)
+                       if re.search(pat, line, re.I) and (name := DEGREE_NAMES[i]) is not None), None)
+        institute = ""
+        m = re.search(r"([A-Z][A-Za-z&.,'\- ]{6,70}(?:Institute|University|College|School|IIT|ISM|NIT|IIIT)[A-Za-z&.,'\- ]*)", line)
+        if m:
+            institute = collapse(m.group(1))
+        years = ""
+        ym = re.search(r"(20\d{2})\s*(?:-|–|to)\s*(20\d{2}|present|ongoing)", line, re.I)
+        if ym:
+            years = ym.group(0)
+        tier = "Other"
+        for pat, label in INSTITUTE_TIERS:
+            if re.search(pat, line, re.I):
+                tier = label
+                break
+        key = (degree or "", institute)
+        if degree and key not in seen:
+            seen.add(key)
+            out.append({"degree": degree, "institution": institute,
+                        "years": years, "classification": tier, "line": line[:160]})
+    return out
+
+
+def skill_recency(claims: dict) -> dict:
+    """Latest year mentioned near each skill's evidence lines (honest proxy:
+    empty when no year appears — we do not fabricate recency)."""
+    recency = {}
+    for skill, items in claims.items():
+        years = []
+        for c in items:
+            for y in re.findall(r"\b(20\d{2})\b", c.get("evidence", "")):
+                years.append(int(y))
+        if years:
+            recency[skill] = max(years)
+    return recency
+
+
+# ---------------------------------------------------------------- skill ontology
+
+
+# Parent links let a specific skill count as *indirect evidence* for a broad
+# requirement (PyTorch ⇒ Deep Learning; FastAPI ⇒ Python). Indirect evidence is
+# always labeled as such — never silently treated as direct proof.
+SKILL_PARENTS = {
+    "PyTorch": "Deep Learning", "TensorFlow": "Deep Learning",
+    "scikit-learn": "Machine Learning", "Computer Vision": "Deep Learning",
+    "NLP": "Machine Learning", "Deep Learning": "Machine Learning",
+    "RAG": "LLMs", "LangChain": "LLMs", "LlamaIndex": "LLMs",
+    "Prompt Engineering": "LLMs", "Agents": "LLMs", "OpenAI": "LLMs",
+    "Gemini": "LLMs", "Hugging Face": "Machine Learning",
+    "Django": "Python", "Flask": "Python", "FastAPI": "Python",
+    "Spring Boot": "Java", "React": "JavaScript", "Next.js": "JavaScript",
+    "Vue": "JavaScript", "Angular": "JavaScript",
+    "Spark": "Data Engineering", "Airflow": "Data Engineering", "dbt": "Data Engineering",
+    "Kafka": "Data Engineering", "Vector DBs": "RAG",
+    "PostgreSQL": "SQL", "MySQL": "SQL", "BigQuery": "SQL", "Snowflake": "SQL",
+    "Databricks": "Data Engineering", "Kubernetes": "Docker",
+    "PySpark": "Spark", "Machine Learning": "AI & ML (broad)",
+    "DPDK": "C++", "Embedded": "C++",
+}
+
+
+def indirect_evidence_for(skill: str, owned_skills: set) -> str:
+    """Return the owned child skill that indirectly supports a broad missing
+    requirement, or ''. Walks one level up the ontology only."""
+    for child, parent in SKILL_PARENTS.items():
+        if parent.lower() == skill.lower() and child in owned_skills:
+            return child
+    return ""
+
+
+# ---------------------------------------------------------------- portfolio
+
+
+def fetch_portfolio(url: str, timeout: int = 10) -> dict:
+    """Best-effort fetch of a public portfolio page: extract title + skills
+    mentioned in visible text. Failures are returned, not swallowed."""
+    import requests as _requests
+
+    if not re.match(r"^https?://", url):
+        raise ValueError("Portfolio URL must start with http:// or https://")
+    r = _requests.get(url, timeout=timeout, headers={"User-Agent": "CareerOps/1.0"},
+                      allow_redirects=True)
+    r.raise_for_status()
+    html = r.text[:400_000]
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+    title = collapse(re.sub(r"<[^>]+>", "", title_m.group(1))) if title_m else ""
+    text = collapse(re.sub(r"<script.*?</script>|<style.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I))
+    found = [name for name, frag in SKILLS.items() if re.search(frag, text.lower())]
+    return {"title": title[:160] or url, "skills": sorted(found), "text_length": len(text)}

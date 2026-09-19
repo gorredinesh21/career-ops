@@ -159,9 +159,10 @@ def role_requests(conn):
 # ---------------------------------------------------------------- candidate
 
 
-def latest_profile(conn):
+def latest_profile(conn, user_key: str = "local"):
     return conn.execute(
-        "SELECT * FROM candidate_profile ORDER BY id DESC LIMIT 1"
+        "SELECT * FROM candidate_profile WHERE user_key = ? ORDER BY id DESC LIMIT 1",
+        (user_key,),
     ).fetchone()
 
 
@@ -233,37 +234,47 @@ STATUSES = ["saved", "applied", "assessment", "interview", "offer",
             "rejected", "withdrawn", "closed"]
 
 
-def track_job(conn, job_id: int, status: str, note: str = "", resume_version: str = ""):
+def track_job(conn, user_key: str, job_id: int, status: str, note: str = "", resume_version: str = ""):
     if status not in STATUSES:
         raise ValueError(f"unknown status {status}")
     conn.execute(
-        "INSERT INTO application_event (job_id, status, note, resume_version, created_at) "
-        "VALUES (?,?,?,?,datetime('now','localtime'))",
-        (job_id, status, collapse(note)[:500], collapse(resume_version)[:120]),
+        "INSERT INTO application_event (user_key, job_id, status, note, resume_version, created_at) "
+        "VALUES (?,?,?,?,?,datetime('now','localtime'))",
+        (user_key, job_id, status, collapse(note)[:500], collapse(resume_version)[:120]),
     )
     conn.commit()
 
 
-def applications(conn):
+def current_application_status(conn, user_key: str, job_id: int):
+    return conn.execute(
+        "SELECT status FROM application_event WHERE user_key = ? AND job_id = ? "
+        "ORDER BY id DESC LIMIT 1", (user_key, job_id),
+    ).fetchone()
+
+
+def applications(conn, user_key: str = "local"):
     """Current status per tracked job = latest event; full timeline attached."""
     jobs = conn.execute(
         """
-        SELECT j.id, j.title, j.company, j.city, f.name AS family_name,
+        SELECT j.id, j.title, j.company, j.city, j.apply_url, f.name AS family_name,
                a.status, a.created_at AS status_at, a.resume_version,
-               (SELECT COUNT(*) FROM application_event e2 WHERE e2.job_id = j.id) AS events
+               (SELECT COUNT(*) FROM application_event e2
+                 WHERE e2.job_id = j.id AND e2.user_key = a.user_key) AS events
         FROM job j
         JOIN application_event a ON a.id = (
-            SELECT id FROM application_event e WHERE e.job_id = j.id
-            ORDER BY id DESC LIMIT 1
+            SELECT id FROM application_event e
+             WHERE e.job_id = j.id AND e.user_key = ?
+             ORDER BY id DESC LIMIT 1
         )
         LEFT JOIN role_family f ON f.id = j.role_family_id
         ORDER BY a.id DESC
-        """
+        """,
+        (user_key,),
     ).fetchall()
     timelines = {}
     for row in conn.execute(
-        "SELECT job_id, status, note, resume_version, created_at "
-        "FROM application_event ORDER BY id"
+        "SELECT job_id, status, note, resume_version, created_at FROM application_event "
+        "WHERE user_key = ? ORDER BY id", (user_key,),
     ).fetchall():
         timelines.setdefault(row["job_id"], []).append(row)
     return jobs, timelines
@@ -313,3 +324,130 @@ def gap_actions(rows, profile_skills_rows):
                             f"No '{skill}' evidence in your profile. If you have used it, add the "
                             "truthful line; if not, a small real project beats a keyword."))
     return actions[:6]
+
+
+# ---------------------------------------------------------------- profile extras + prefs
+
+
+def profile_education(conn, profile_id: int):
+    return conn.execute(
+        "SELECT * FROM candidate_education WHERE profile_id = ?", (profile_id,)
+    ).fetchall()
+
+
+def profile_reviews(conn, profile_id: int):
+    return conn.execute(
+        "SELECT * FROM candidate_review WHERE profile_id = ? AND skill <> '__prefs__' "
+        "ORDER BY skill", (profile_id,)
+    ).fetchall()
+
+
+def profile_prefs(conn, profile) -> dict:
+    import json as _json
+    row = conn.execute(
+        "SELECT note FROM candidate_review WHERE profile_id = ? AND skill = '__prefs__'",
+        (profile["id"],),
+    ).fetchone()
+    if not row or not row["note"]:
+        return {}
+    try:
+        return _json.loads(row["note"])
+    except ValueError:
+        return {}
+
+
+def profile_band(conn, profile):
+    prefs = profile_prefs(conn, profile)
+    band = prefs.get("band")
+    return tuple(band) if band else None
+
+
+def profile_portfolios(conn, profile_id: int):
+    return conn.execute(
+        "SELECT * FROM candidate_portfolio WHERE profile_id = ? ORDER BY id DESC",
+        (profile_id,)
+    ).fetchall()
+
+
+def profile_recency(conn, profile_id: int):
+    """skill -> last year evidenced (parsed from the stored evidence markers)."""
+    import re as _re
+    out = {}
+    for row in conn.execute(
+        "SELECT skill, section FROM candidate_skill WHERE profile_id = ?", (profile_id,)
+    ).fetchall():
+        m = _re.search(r"last evidenced (20\d{2})", row["section"] or "")
+        if m:
+            out[row["skill"]] = m.group(1)
+    return out
+
+
+def saved_searches(conn, user_key: str):
+    return conn.execute(
+        "SELECT * FROM saved_search WHERE user_key = ? ORDER BY id DESC", (user_key,)
+    ).fetchall()
+
+
+def progress_observations(conn, user_key: str) -> list:
+    """Longitudinal observations from the user's own recorded history (BRD
+    Module I): funnel counts, stalled applications, recurring gaps. Framed as
+    observations, not causal claims."""
+    jobs, _ = applications(conn, user_key)
+    if not jobs:
+        return []
+    obs = []
+    by_stage = {}
+    for j in jobs:
+        by_stage.setdefault(j["status"], []).append(j)
+    for stage in ("applied", "assessment", "interview", "offer", "rejected"):
+        if stage in by_stage:
+            obs.append(f"{len(by_stage[stage])} tracked at '{stage}'.")
+    stalled = [j for j in jobs
+               if j["status"] in ("applied", "assessment")
+               and (j["status_at"] or "") < (date_today_minus(14))]
+    if stalled:
+        obs.append(f"{len(stalled)} application(s) with no movement for 2+ weeks — "
+                   "a follow-up is reasonable: " + "; ".join(
+                       f"{j['title']} ({j['company']})" for j in stalled[:3]))
+    if by_stage.get("offer"):
+        obs.append("You have an offer tracked — congrats. Compare its role family against your evidence coverage before deciding.")
+    # recurring gaps across tracked jobs
+    job_ids = [j["id"] for j in jobs]
+    if job_ids and (prof := latest_profile(conn, user_key)):
+        owned = {s["skill"] for s in profile_skills(conn, prof["id"])}
+        qMarks = ",".join("?" * len(job_ids))
+        missing = conn.execute(
+            f"SELECT skill, COUNT(*) AS n FROM job_skill WHERE job_id IN ({qMarks}) "
+            "AND requirement = 'required' GROUP BY skill ORDER BY n DESC LIMIT 6",
+            job_ids,
+        ).fetchall()
+        gaps = [(r["skill"], r["n"]) for r in missing if r["skill"] not in owned]
+        if gaps:
+            obs.append("Most-demanded skills your applications keep hitting without "
+                       "profile evidence: " + ", ".join(f"{s} (in {n} applications)" for s, n in gaps[:4])
+                       + ". Closing one of these unlocks every future application to similar roles.")
+    return obs
+
+
+def date_today_minus(days: int) -> str:
+    from datetime import date, timedelta
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
+def product_metrics(conn) -> dict:
+    """BRD section 21: activation / discovery / outcome / ops, measured from
+    real events only."""
+    one = lambda sql, p=(): conn.execute(sql, p).fetchone()["n"]  # noqa: E731
+    return {
+        "profiles": one("SELECT COUNT(*) AS n FROM candidate_profile"),
+        "github_linked": one("SELECT COUNT(*) AS n FROM candidate_profile WHERE github_user IS NOT NULL AND github_user <> ''"),
+        "reviews_confirmed": one("SELECT COUNT(*) AS n FROM candidate_review WHERE verdict IN ('confirmed','rejected')"),
+        "tracked_jobs": one("SELECT COUNT(DISTINCT job_id) AS n FROM application_event"),
+        "applications_total": one("SELECT COUNT(*) AS n FROM application_event"),
+        "job_views": one("SELECT COUNT(*) AS n FROM page_event WHERE kind = 'job_view'"),
+        "agent_queries": one("SELECT COUNT(*) AS n FROM page_event WHERE kind = 'agent_query'"),
+        "saved_searches": one("SELECT COUNT(*) AS n FROM saved_search"),
+        "role_votes": one("SELECT COUNT(*) AS n FROM role_vote"),
+        "feedback_reports": one("SELECT COUNT(*) AS n FROM feedback"),
+        "accounts": one("SELECT COUNT(*) AS n FROM co_user"),
+    }

@@ -8,7 +8,7 @@ JobSkill requirements + RoleFamily taxonomy + role requests/votes + feedback
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "careerops.db"
+from app.config import DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS role_family (
@@ -102,6 +102,71 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS co_user (
+    id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES co_user(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS candidate_education (
+    profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
+    degree TEXT, institution TEXT, dates TEXT, years TEXT,
+    classification TEXT,
+    UNIQUE(profile_id, degree, institution)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_review (
+    id INTEGER PRIMARY KEY,
+    profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
+    skill TEXT NOT NULL,
+    verdict TEXT NOT NULL,                -- confirmed | rejected
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(profile_id, skill)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_portfolio (
+    id INTEGER PRIMARY KEY,
+    profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
+    url TEXT NOT NULL,
+    title TEXT,
+    skills_json TEXT,
+    error TEXT,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_capability (
+    job_id INTEGER NOT NULL REFERENCES job(id),
+    capability TEXT NOT NULL,             -- ownership|design|scale|mentorship|cross_team|production
+    evidence TEXT,
+    UNIQUE(job_id, capability)
+);
+
+CREATE TABLE IF NOT EXISTS saved_search (
+    id INTEGER PRIMARY KEY,
+    user_key TEXT NOT NULL,               -- username or 'local'
+    name TEXT NOT NULL,
+    query_string TEXT NOT NULL,
+    last_checked TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS page_event (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,                   -- job_view | analysis_view | agent_query ...
+    job_id INTEGER,
+    detail TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_run (
     id INTEGER PRIMARY KEY,
     started_at TEXT NOT NULL,
@@ -116,6 +181,7 @@ CREATE TABLE IF NOT EXISTS ingest_run (
 
 CREATE TABLE IF NOT EXISTS candidate_profile (
     id INTEGER PRIMARY KEY,
+    user_key TEXT NOT NULL DEFAULT 'local',   -- 'local' (no login) or username
     name TEXT NOT NULL DEFAULT 'Local profile',
     raw_text TEXT NOT NULL,
     source TEXT,
@@ -139,6 +205,7 @@ CREATE TABLE IF NOT EXISTS candidate_skill (
 
 CREATE TABLE IF NOT EXISTS application_event (
     id INTEGER PRIMARY KEY,
+    user_key TEXT NOT NULL DEFAULT 'local',
     job_id INTEGER NOT NULL REFERENCES job(id),
     status TEXT NOT NULL,        -- saved|applied|assessment|interview|offer|rejected|withdrawn|closed
     note TEXT,

@@ -12,9 +12,18 @@
   <nav>
     <a href="/jobs">Jobs</a>
     <a href="/applications">Applications</a>
+    <a href="/alerts">Alerts</a>
     <a href="/roles">Roles</a>
     <a href="/profile">Profile</a>
+    <a href="/agent">Agent</a>
     <a href="/ops">Ops</a>
+    <a class="tg" href="{{ telegram_url }}" target="_blank" rel="noopener noreferrer">Telegram ↗</a>
+    {% if user %}
+    <span class="muted small">· {{ user.username }}</span>
+    <form method="post" action="/logout" style="display:inline"><button class="linkish" type="submit">sign out</button></form>
+    {% else %}
+    <a href="/login">Sign in</a>
+    {% endif %}
   </nav>
 </header>
 <main class="wrap">

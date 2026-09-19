@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Career-Ops{% endblock %}
+{% block content %}
+<div class="card login-card">
+  <h1>Sign in</h1>
+  <p class="muted">Optional: browsing, the local profile and tracking all work without an
+  account. An account gives you your own profile space, applications and saved searches
+  on any browser.</p>
+  {% if msg %}<div class="flash warn">{{ msg }}</div>{% endif %}
+  <form method="post" action="/login" class="profile-form">
+    <label>Username <input type="text" name="username" required minlength="3" maxlength="30"></label>
+    <label>Password <input type="password" name="password" required minlength="8"></label>
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>
+  <h2>New here?</h2>
+  <form method="post" action="/register" class="profile-form">
+    <label>Choose a username <input type="text" name="username" required minlength="3" maxlength="30"></label>
+    <label>Choose a password (8+ chars) <input type="password" name="password" required minlength="8"></label>
+    <button class="btn" type="submit">Create account</button>
+  </form>
+</div>
+{% endblock %}

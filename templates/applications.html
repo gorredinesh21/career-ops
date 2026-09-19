@@ -6,6 +6,16 @@
 version you used, and see the timeline. Applications still happen at the source — this is
 memory, not auto-apply. Progress observations come later, from your own recorded history.</p>
 
+{% if observations %}
+<div class="card">
+  <h2>Progress observations</h2>
+  <p class="muted small">From your own recorded history — observations, not causal claims.</p>
+  <ul class="gaps">
+    {% for o in observations %}<li>{{ o }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if jobs|length == 0 %}
 <div class="card empty">
   <b>Nothing tracked yet.</b>

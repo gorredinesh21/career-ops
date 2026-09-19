@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Career agent — Career-Ops{% endblock %}
+{% block content %}
+<h1>Career agent</h1>
+<p class="muted">An interface to the structured Career-Ops intelligence layer, not a
+chatbot. Every answer is computed from your profile evidence, live postings and tracked
+applications — and it will never predict hiring outcomes.</p>
+
+<form method="get" action="/agent" class="inline-form">
+  <input type="text" name="q" value="{{ q }}" placeholder="e.g. what are my gaps for GenAI Engineer?">
+  <button class="btn primary" type="submit">Ask</button>
+</form>
+
+<div class="chips" style="margin-bottom:16px">
+  {% for ex in ["What are my gaps for GenAI Engineer?", "What are my gaps for Data Engineer?",
+                "What are the best current fits for me?", "What is my application status?",
+                "What should I do this week?", "Will I get hired?"] %}
+  <a class="chip" href="/agent?q={{ ex | urlencode }}">{{ ex }}</a>
+  {% endfor %}
+</div>
+
+{% if answer %}
+<div class="card agent-answer">
+  <h2>{{ answer.title }}</h2>
+  {% for line in answer.body %}
+  <p>{{ line }}</p>
+  {% endfor %}
+  {% if answer.links %}
+  <div class="chips">
+    {% for href, label in answer.links %}
+    <a class="chip merged" href="{{ href }}">{{ label }} →</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>What this agent is — and is not</h2>
+  <p class="muted small">
+    It answers from structured data: your evidence-backed skills, job requirements,
+    market commonality and your application history. It does not generate opinions,
+    fabricate achievements or produce probability scores. If a question needs data it
+    doesn't have, it says so.
+  </p>
+</div>
+{% endblock %}

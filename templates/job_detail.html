@@ -28,6 +28,8 @@
       evidence — no percentage scores, no hiring predictions. "Missing" means your resume
       and GitHub show no evidence yet; it does not mean you can't do it.</p>
       <div class="fitband"><b>{{ fit_band }}</b> <span class="muted small">— {{ fit_why }}</span></div>
+      {% if alignment %}<div class="meta"><b>Experience:</b> {{ alignment }}</div>{% endif %}
+      {% if pref_mismatches %}{% for pm in pref_mismatches %}<div class="flash warn">Preference mismatch — {{ pm }}. Shown for your decision; we don't hide the job.</div>{% endfor %}{% endif %}
       <table class="table">
         <thead><tr><th>Requirement</th><th>Status</th><th>Your evidence</th></tr></thead>
         <tbody>
@@ -37,7 +39,9 @@
           <td>
             {% if r.status == 'match' %}<span class="chip">{{ r.depth }}</span>
             {% elif r.status == 'weak' %}<span class="chip inferred">{{ r.depth }}</span>
+            {% elif r.status == 'indirect' %}<span class="chip pref">indirect: {{ r.depth }}</span>
             {% else %}<span class="chip muted-chip">no evidence yet</span>{% endif %}
+            {% if r.market is not none %}<span class="muted small"> · {{ r.market }}% of family</span>{% endif %}
           </td>
           <td class="muted small">{{ r.evidence[:140] }}</td>
         </tr>
@@ -46,12 +50,29 @@
       </table>
       {% if gap_actions %}
       <div class="skillgroup">
-        <h3>What to do next (typed gaps)</h3>
+        <h3>What to do next (typed gaps, market-prioritized)</h3>
         <ul class="gaps">
           {% for skill, gap_type, action in gap_actions %}
           <li><b>{{ skill }}</b> — <i>{{ gap_type }}</i><br><span class="muted small">{{ action }}</span></li>
           {% endfor %}
         </ul>
+      </div>
+      {% endif %}
+      {% if capabilities %}
+      <div class="skillgroup">
+        <h3>What this role really expects (scope signals)</h3>
+        <table class="table">
+          <thead><tr><th>Signal</th><th>From the posting</th><th>Your evidence</th></tr></thead>
+          <tbody>
+          {% for c in capabilities %}
+          <tr>
+            <td><b>{{ c.capability.replace('_',' ') }}</b><div class="muted small">{{ c.meaning }}</div></td>
+            <td class="muted small">{{ c.evidence[:150] }}</td>
+            <td>{% if c.you_have_evidence %}<span class="chip">evidence present</span>{% else %}<span class="chip muted-chip">no matching evidence yet</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
       </div>
       {% endif %}
     </div>

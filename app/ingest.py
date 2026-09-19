@@ -535,6 +535,20 @@ class Ingestor:
                     )
         wb.close()
 
+    def backfill_capabilities(self) -> None:
+        """Extract seniority/scope signals (Module E) for every job with a
+        description. Deterministic; runs on every ingest (cheap, idempotent)."""
+        from app.jobexpect import extract_capabilities
+
+        for row in self.conn.execute(
+                "SELECT id, description FROM job WHERE description <> ''").fetchall():
+            caps = extract_capabilities(row["description"])
+            self.conn.execute("DELETE FROM job_capability WHERE job_id = ?", (row["id"],))
+            for cap, evidence in caps.items():
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO job_capability (job_id, capability, evidence) "
+                    "VALUES (?,?,?)", (row["id"], cap, evidence[:400]))
+
     def recompute_freshness(self) -> None:
         rows = self.conn.execute("SELECT id, first_seen, last_seen FROM job").fetchall()
         for row in rows:
@@ -560,6 +574,7 @@ class Ingestor:
             else:
                 self.stats["errors"].append(f"alert excel missing: {xl}")
         self.recompute_freshness()
+        self.backfill_capabilities()
         # Feed excel runs last so its human-verified live status (OPEN/CLOSED)
         # is not overwritten by the date-based freshness recomputation.
         if feed_excel and Path(feed_excel).exists():

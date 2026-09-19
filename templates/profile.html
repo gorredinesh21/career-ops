@@ -42,9 +42,13 @@ with Phase 2.</p>
     {% if profile.github_error %}
     <div class="flash warn">GitHub analysis failed: {{ profile.github_error }}. Resume evidence is unaffected.</div>
     {% endif %}
-    <form method="post" action="/profile/delete" onsubmit="return confirm('Delete profile and all derived analysis?')">
-      <button class="btn ghost" type="submit">Delete profile (privacy control)</button>
-    </form>
+    <h3>Your data (privacy controls)</h3>
+    <div class="chips">
+      <a class="btn small-btn" href="/profile/export">Export everything as JSON</a>
+      <form method="post" action="/profile/delete" onsubmit="return confirm('Delete profile and all derived analysis?')">
+        <button class="btn small-btn ghost" type="submit">Delete profile + applications</button>
+      </form>
+    </div>
     <form method="post" action="/profile/upload" enctype="multipart/form-data" style="margin-top:10px">
       <input type="hidden" name="resume_text" value="">
       <label class="small">Rebuild with a different resume / GitHub
@@ -98,6 +102,90 @@ with Phase 2.</p>
     </div>
     {% endif %}
   {% endfor %}
+</div>
+
+{% if education %}
+<div class="card">
+  <h2>Education (parsed)</h2>
+  <table class="table">
+    <thead><tr><th>Degree</th><th>Institution</th><th>Years</th><th>Classification</th></tr></thead>
+    <tbody>
+    {% for e in education %}
+    <tr><td>{{ e.degree }}</td><td>{{ e.institution or '—' }}</td><td>{{ e.years or '—' }}</td>
+        <td><span class="chip">{{ e.classification }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card" id="review">
+  <h2>Review your skills — the ambiguity loop</h2>
+  <p class="muted small">Deterministic parsing can't know what you actually know. For
+  low-confidence or missing claims, confirm or reject — confirmed skills count as
+  evidence in matching; rejected ones are excluded everywhere.</p>
+  {% if skills %}
+  <form method="post" action="/profile/review" class="inline-form">
+    <select name="skill" required>
+      <option value="">choose a skill…</option>
+      {% for s in skills %}<option value="{{ s.skill }}">{{ s.skill }} ({{ s.depth }})</option>{% endfor %}
+      <option value="__missing__">— a skill not detected at all —</option>
+    </select>
+    <input type="hidden" name="note" value="">
+    <button class="btn small-btn" name="verdict" value="confirmed">I really have this</button>
+    <button class="btn small-btn ghost" name="verdict" value="rejected">Not really mine</button>
+  </form>
+  {% endif %}
+  {% if reviews %}
+  <table class="table">
+    <thead><tr><th>Skill</th><th>Your verdict</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for r in reviews %}
+    <tr><td><b>{{ r.skill }}</b></td><td>{{ r.verdict }}</td><td class="muted small">{{ r.note or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="card" id="portfolio">
+  <h2>Portfolio evidence</h2>
+  <p class="muted small">Add a public portfolio URL; we fetch it once, extract the title
+  and any skills mentioned, and store the result. Failures show as errors — never silently skipped.</p>
+  <form method="post" action="/profile/portfolio" class="inline-form">
+    <input type="text" name="url" placeholder="https://your-site.example" required>
+    <button class="btn primary" type="submit">Analyze portfolio</button>
+  </form>
+  {% for p in portfolios %}
+  <div class="meta">
+    <a href="{{ p.url }}" target="_blank" rel="noopener noreferrer">{{ p.title or p.url }}</a>
+    {% if p.error %}<span class="flash warn">error: {{ p.error }}</span>
+    {% else %}<span class="muted small">· skills found: {{ p.skills_json }}</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Your preferences</h2>
+  <p class="muted small">Used for band alignment and preference-mismatch flags on job
+  pages — informing, never filtering silently.</p>
+  <form method="post" action="/profile/upload" class="profile-form">
+    <input type="hidden" name="resume_text" value="">
+    <input type="hidden" name="github_user" value="{{ profile.github_user or '' }}">
+    <label>Experience band
+      <select name="band">
+        <option value="">not set</option>
+        {% for b in bands %}<option value="{{ b }}" {% if prefs.band and prefs.band[0] == b.split('-')[0] %}selected{% endif %}>{{ b }} YOE</option>{% endfor %}
+      </select>
+    </label>
+    <label>Work models you want (comma separated: remote, hybrid, onsite)
+      <input type="text" name="work_pref" value="{{ prefs.work_models | join(', ') if prefs.work_models else '' }}">
+    </label>
+    <label>Locations you want (comma separated)
+      <input type="text" name="loc_pref" value="{{ prefs.locations | join(', ') if prefs.locations else '' }}">
+    </label>
+    <button class="btn" type="submit">Save preferences</button>
+  </form>
 </div>
 
 {% if repos %}

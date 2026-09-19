@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Alerts — Career-Ops{% endblock %}
+{% block content %}
+<h1>Alerts</h1>
+<p class="muted">Saved searches with a "new since your last check" diff — computed from
+first-seen evidence, never from "posted today" claims. Daily high-signal drops also go
+to the <a href="{{ telegram_url }}" target="_blank" rel="noopener noreferrer">Telegram channel ↗</a>.</p>
+
+<div class="card">
+  <h2>Save the current feed view</h2>
+  <form method="post" action="/alerts/save" class="inline-form">
+    <input type="text" name="name" placeholder="name, e.g. GenAI 1-2 YOE remote" required maxlength="60">
+    <input type="text" name="query_string" placeholder="query string from the /jobs URL, e.g. family=genai-engineer&band=1-2&work=remote" required>
+    <button class="btn primary" type="submit">Save search</button>
+  </form>
+  <p class="muted small">Tip: set your filters on the Jobs page, copy everything after "?" in the
+  URL, and paste it here.</p>
+</div>
+
+{% if items|length == 0 %}
+<div class="card empty"><b>No saved searches yet.</b></div>
+{% endif %}
+
+{% for it in items %}
+<div class="card">
+  <div class="job-card-top">
+    <div>
+      <b>{{ it.search.name }}</b>
+      <div class="muted small">{{ it.search.query_string }}</div>
+      <div class="meta">{{ it.total }} matching jobs · last checked {{ it.search.last_checked or 'never' }}</div>
+    </div>
+    {% if it.new > 0 %}
+    <span class="badge fresh-active">{{ it.new }} new</span>
+    {% else %}
+    <span class="badge fresh-closed">no new</span>
+    {% endif %}
+  </div>
+  {% if it.new_jobs %}
+  <ul class="sources">
+    {% for j in it.new_jobs %}
+    <li><a href="/jobs/{{ j.id }}">{{ j.title }}</a> <span class="muted small">{{ j.company }} · first seen {{ j.first_seen }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="chips">
+    <a class="btn small-btn" href="/jobs?{{ it.search.query_string }}">Open in feed</a>
+    <form method="post" action="/alerts/{{ it.search.id }}/check" style="display:inline">
+      <button class="btn small-btn" type="submit">Mark checked</button>
+    </form>
+    <form method="post" action="/alerts/{{ it.search.id }}/delete" style="display:inline">
+      <button class="btn small-btn ghost" type="submit">Delete</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
