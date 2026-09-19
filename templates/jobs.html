@@ -70,19 +70,22 @@
     {% endif %}
 
     {% for j in jobs %}
-    <a class="card job-card" href="/jobs/{{ j.id }}">
+    <a class="card job-card fam-{{ j.family_slug or 'sde' }}" href="/jobs/{{ j.id }}">
       <div class="job-card-top">
-        <div>
-          <b class="job-title">{{ j.title }}</b>
-          <div class="muted">
-            {{ j.company }}{% if j.location %} · {{ j.location }}{% endif %}
-            {% if j.work_model and j.work_model != 'unspecified' %} · {{ j.work_model }}{% endif %}
+        <div style="display:flex; align-items:flex-start">
+          <span class="company-avatar">{{ (j.company or '?')[:1]|upper }}</span>
+          <div>
+            <b class="job-title">{{ j.title }}</b>
+            <div class="muted">
+              {{ j.company }}{% if j.location %} · {{ j.location }}{% endif %}
+              {% if j.work_model and j.work_model != 'unspecified' %} · {{ j.work_model }}{% endif %}
+            </div>
           </div>
         </div>
         <span class="badge fresh-{{ j.freshness }}">{{ j.freshness.replace('_',' ') }}</span>
       </div>
       <div class="chips">
-        {% if j.family_name %}<span class="chip">{{ j.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified</span>{% endif %}
+        {% if j.family_name %}<span class="chip fam-chip fam-{{ j.family_slug }}">{{ j.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified</span>{% endif %}
         {% if j.exp_stated %}<span class="chip">{{ j.exp_stated }}</span>{% else %}<span class="chip muted-chip">exp not stated</span>{% endif %}
         {% if j.salary_text %}<span class="chip">{{ j.salary_text }}</span>{% endif %}
         {% if j.source_count and j.source_count > 1 %}<span class="chip merged">{{ j.source_count }} sources merged</span>{% endif %}

@@ -39,6 +39,32 @@ JOB_COLS = ["canonical_key", "title", "company", "location", "city", "work_model
             "freshness", "created_at", "updated_at"]
 
 
+CORPUS_VERSION_KEY = "corpus_version"
+
+# Child rows that must go before job rows can be deleted (FK order).
+# User accounts, profiles, votes, reviews and saved searches are NOT here —
+# they survive a corpus replace.
+JOB_CHILD_TABLES = [
+    "application_event",  # tracks deleted jobs; meaningless after replace
+    "feedback",
+    "page_event",         # soft job_id reference, no FK
+    "job_capability",
+    "job_skill",
+    "job_snapshot",
+    "job_source",
+]
+
+
+def _seed_meta(seed_conn: sqlite3.Connection, key: str):
+    try:
+        row = seed_conn.execute(
+            "SELECT value FROM app_meta WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
 def ensure_db(db_path, seed_path) -> bool:
     """Create the live DB from the baked snapshot on first boot. Returns True
     when a fresh DB was seeded."""
@@ -53,10 +79,43 @@ def ensure_db(db_path, seed_path) -> bool:
 
 
 def sync_jobs_from_seed(conn: sqlite3.Connection, seed_path) -> int:
-    """Merge job rows from the baked snapshot into the live DB. Returns the
-    number of jobs processed. No-op (0) when the seed is absent (local dev)."""
+    """Refresh job rows from the baked snapshot into the live DB. Returns the
+    number of jobs processed. No-op (0) when the seed is absent (local dev).
+
+    Corpus replace: when the seed carries a corpus_version the live DB does
+    not have, the live job corpus (and only it — never accounts, profiles,
+    votes or saved searches) is wiped first, so removed/deprecated jobs
+    actually disappear instead of lingering forever."""
     if not seed_path.exists():
         return 0
+    seed = sqlite3.connect(str(seed_path))
+    seed.row_factory = sqlite3.Row
+    seed_version = _seed_meta(seed, CORPUS_VERSION_KEY)
+    seed.close()
+
+    live_version = None
+    try:
+        row = conn.execute(
+            "SELECT value FROM app_meta WHERE key = ?", (CORPUS_VERSION_KEY,)
+        ).fetchone()
+        live_version = row[0] if row else None
+    except sqlite3.OperationalError:
+        pass  # table not created yet — init_db runs before sync
+
+    replace = seed_version is not None and seed_version != live_version
+    if replace:
+        for table in JOB_CHILD_TABLES:
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("DELETE FROM job")
+        conn.execute(
+            "INSERT INTO app_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (CORPUS_VERSION_KEY, seed_version),
+        )
+        conn.commit()
+        print(f"[sync] corpus replace: version {live_version!r} -> "
+              f"{seed_version!r}; job tables wiped", flush=True)
+
     conn.execute("ATTACH DATABASE ? AS seed", (str(seed_path),))
     try:
         cols = ", ".join(JOB_COLS)

@@ -33,8 +33,10 @@
 <section class="families-grid">
   <h2>Role families</h2>
   <div class="grid">
+    {% set fam_icons = {'genai-engineer':'✨','dl-engineer':'🧠','ml-engineer':'📈','data-engineer':'🗄️','cpp-engineer':'⚙️','forward-deployed-engineer':'🚀','gtm-engineer':'📣','backend-engineer':'🛠️','sde':'💻'} %}
     {% for f in families %}
-    <a class="card family-card" href="/jobs?family={{ f.slug }}">
+    <a class="card family-card fam-{{ f.slug }}" href="/jobs?family={{ f.slug }}">
+      <span class="fam-icon">{{ fam_icons.get(f.slug, '💼') }}</span>
       <b>{{ f.name }}</b>
       <span class="muted">{{ f.tagline }}</span>
       <span class="count">{{ f.n }} job{{ '' if f.n == 1 else 's' }}</span>
@@ -47,7 +49,7 @@
   <h2>Latest sightings</h2>
   <div class="grid">
     {% for j in latest %}
-    <a class="card job-mini" href="/jobs/{{ j.id }}">
+    <a class="card job-mini fam-{{ j.family_slug or 'sde' }}" href="/jobs/{{ j.id }}">
       <b>{{ j.title }}</b>
       <span class="muted">{{ j.company }}{% if j.city %} · {{ j.city }}{% endif %}</span>
       <span class="meta">first seen {{ j.first_seen }}{% if j.family_name %} · {{ j.family_name }}{% endif %}</span>

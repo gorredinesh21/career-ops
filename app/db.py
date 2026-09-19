@@ -216,6 +216,11 @@ CREATE TABLE IF NOT EXISTS application_event (
 );
 CREATE INDEX IF NOT EXISTS idx_appjob ON application_event(job_id);
 
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS candidate_github_repo (
     profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
     name TEXT NOT NULL,

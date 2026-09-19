@@ -7,8 +7,10 @@ only after sustained demand crosses {{ threshold }} votes and ingestion quality 
 one burst of votes cannot create taxonomy debt.</p>
 
 <div class="grid">
+  {% set fam_icons = {'genai-engineer':'✨','dl-engineer':'🧠','ml-engineer':'📈','data-engineer':'🗄️','cpp-engineer':'⚙️','forward-deployed-engineer':'🚀','gtm-engineer':'📣','backend-engineer':'🛠️','sde':'💻'} %}
   {% for f in families %}
-  <a class="card family-card" href="/jobs?family={{ f.slug }}">
+  <a class="card family-card fam-{{ f.slug }}" href="/jobs?family={{ f.slug }}">
+    <span class="fam-icon">{{ fam_icons.get(f.slug, '💼') }}</span>
     <b>{{ f.name }}</b>
     <span class="muted">{{ f.tagline }}</span>
     <span class="count">{{ f.n }} job{{ '' if f.n == 1 else 's' }} indexed</span>

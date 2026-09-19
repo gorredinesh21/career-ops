@@ -26,10 +26,12 @@ with Phase 2.</p>
 
 {% else %}
 <div class="stats">
-  <div class="stat"><b>{{ skills|length }}</b><span>skills with evidence</span></div>
-  <div class="stat"><b>{{ repos|length }}</b><span>public repos analyzed</span></div>
-  <div class="stat"><b>{{ affinity[0].matched_skills if affinity else 0 }}</b><span>skills demanded by top family</span></div>
+  <div class="stat c-indigo"><span class="icon">🧩</span><b>{{ skills|length }}</b><span>skills with evidence</span></div>
+  <div class="stat c-teal"><span class="icon">📦</span><b>{{ repos|length }}</b><span>public repos analyzed</span></div>
+  <div class="stat c-green"><span class="icon">🎯</span><b>{{ affinity[0].matched_skills if affinity else 0 }}</b><span>skills demanded by top family</span></div>
 </div>
+
+{% set fam_icons = {'genai-engineer':'✨','dl-engineer':'🧠','ml-engineer':'📈','data-engineer':'🗄️','cpp-engineer':'⚙️','forward-deployed-engineer':'🚀','gtm-engineer':'📣','backend-engineer':'🛠️','sde':'💻'} %}
 
 <div class="two-col">
   <div class="card">
@@ -62,43 +64,49 @@ with Phase 2.</p>
     <h2>Role families your evidence supports</h2>
     <p class="muted small">Measured against live postings: how many of each family's
     demanded skills your evidence covers.</p>
-    <table class="table">
-      <thead><tr><th>Family</th><th>Your skills in demand</th><th>Family demands</th></tr></thead>
-      <tbody>
+    <div class="coverage">
       {% for a in affinity[:6] %}
-        <tr>
-          <td><a href="/jobs?family={{ a.slug }}">{{ a.name }}</a></td>
-          <td><b>{{ a.matched_skills }}</b></td>
-          <td class="muted">{{ a.family_skills }}</td>
-        </tr>
+      {% set pct = ((a.matched_skills / a.family_skills * 100) | round | int) if a.family_skills else 0 %}
+      <div class="fam-{{ a.slug }}">
+        <div class="row-top">
+          <b>{{ fam_icons.get(a.slug, '💼') }} <a href="/jobs?family={{ a.slug }}">{{ a.name }}</a></b>
+          <span class="nums">{{ a.matched_skills }} / {{ a.family_skills }} skills · {{ pct }}%</span>
+        </div>
+        <div class="track"><span class="fill" style="width: {{ pct }}%"></span></div>
+      </div>
       {% else %}
-        <tr><td colspan="3" class="muted">no overlap measured yet</td></tr>
+      <p class="muted">no overlap measured yet</p>
       {% endfor %}
-      </tbody>
-    </table>
+    </div>
   </div>
 </div>
 
 <div class="card">
-  <h2>Skill graph — strongest evidence first</h2>
+  <h2>Skill profile — strongest evidence first</h2>
+  <div class="depth-legend">
+    <span class="k d5">production use</span>
+    <span class="k d4">independent build</span>
+    <span class="k d3">working use</span>
+    <span class="k d2">listed in skills</span>
+    <span class="k d1">mentioned</span>
+    <span class="k d0">exposure</span>
+  </div>
+  {% set depth_cls = {'production use':'d5','independent build':'d4','working use':'d3','listed in skills section':'d2','mentioned':'d1','exposure':'d0'} %}
   {% for depth in depth_order %}
     {% set group = skills | selectattr('depth', 'equalto', depth) | list %}
     {% if group %}
-    <div class="skillgroup">
+    <div class="skillgroup {{ depth_cls.get(depth, 'd0') }}">
       <h3>{{ depth }} ({{ group|length }})</h3>
-      <table class="table">
-        <thead><tr><th>Skill</th><th>Where</th><th>Evidence line</th><th>Conf.</th></tr></thead>
-        <tbody>
+      <div class="skillbars">
         {% for s in group %}
-          <tr>
-            <td><b>{{ s.skill }}</b></td>
-            <td class="muted">{{ s.section }}</td>
-            <td class="muted small">{{ s.evidence[:160] }}</td>
-            <td>{{ '%.0f'|format((s.confidence or 0) * 100) }}%</td>
-          </tr>
+        <div class="skillbar {{ depth_cls.get(s.depth, 'd0') }}">
+          <span class="sname"><span class="dot"></span>{{ s.skill }}</span>
+          <span class="track"><span class="fill" style="width: {{ ((s.confidence or 0) * 100) | round | int }}%"></span></span>
+          <span class="pct">{{ '%.0f'|format((s.confidence or 0) * 100) }}%</span>
+          <span class="evidence">{{ s.section }} — “{{ s.evidence[:160] }}”</span>
+        </div>
         {% endfor %}
-        </tbody>
-      </table>
+      </div>
     </div>
     {% endif %}
   {% endfor %}
@@ -112,7 +120,7 @@ with Phase 2.</p>
     <tbody>
     {% for e in education %}
     <tr><td>{{ e.degree }}</td><td>{{ e.institution or '—' }}</td><td>{{ e.years or '—' }}</td>
-        <td><span class="chip">{{ e.classification }}</span></td></tr>
+        <td><span class="chip fam-chip fam-sde">{{ e.classification }}</span></td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -141,7 +149,10 @@ with Phase 2.</p>
     <thead><tr><th>Skill</th><th>Your verdict</th><th>Note</th></tr></thead>
     <tbody>
     {% for r in reviews %}
-    <tr><td><b>{{ r.skill }}</b></td><td>{{ r.verdict }}</td><td class="muted small">{{ r.note or '' }}</td></tr>
+    <tr><td><b>{{ r.skill }}</b></td><td>
+      {% if r.verdict == 'confirmed' %}<span class="badge fresh-active">{{ r.verdict }}</span>
+      {% else %}<span class="badge fresh-stale">{{ r.verdict }}</span>{% endif %}
+    </td><td class="muted small">{{ r.note or '' }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -194,20 +205,21 @@ with Phase 2.</p>
   <p class="muted small">Public repos via the GitHub API, sorted by last push. Stars are
   context, never treated as proficiency. Original (non-fork) repos weigh more in your
   evidence than forks.</p>
+  {% set lang_colors = {'Python':'#3572A5','JavaScript':'#f1e05a','TypeScript':'#3178c6','Java':'#b07219','C++':'#f34b7d','C':'#555555','Jupyter Notebook':'#DA5B0B','HTML':'#e34c26','CSS':'#563d7c','Shell':'#89e051','Go':'#00ADD8','Rust':'#dea584','Kotlin':'#A97BFF','Dart':'#00B4AB','Swift':'#F05138'} %}
   <table class="table">
     <thead><tr><th>Repo</th><th>Language</th><th>★</th><th>Last push</th><th>Notes</th></tr></thead>
     <tbody>
     {% for r in repos %}
-      <tr>
-        <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>
-          {% set flag = repo_flags.get(r.name, '') %}
-          {% if flag %}<span class="repo-flag {{ flag }}">{{ flag.replace('-', ' ') }}</span>{% endif %}
-        </td>
-        <td>{{ r.language }}</td>
-        <td>{{ r.stars }}</td>
-        <td class="muted">{{ r.pushed_at }}</td>
-        <td class="muted small">{{ (r.description or '')[:100] }}</td>
-      </tr>
+    <tr>
+      <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>
+        {% set flag = repo_flags.get(r.name, '') %}
+        {% if flag %}<span class="repo-flag {{ flag }}">{{ flag.replace('-', ' ') }}</span>{% endif %}
+      </td>
+      <td>{% if r.language %}<span class="lang-dot" style="background: {{ lang_colors.get(r.language, '#94a3b8') }}"></span>{{ r.language }}{% else %}—{% endif %}</td>
+      <td>{% if r.stars %}⭐ {{ r.stars }}{% else %}—{% endif %}</td>
+      <td class="muted">{{ r.pushed_at }}</td>
+      <td class="muted small">{{ (r.description or '')[:100] }}</td>
+    </tr>
     {% endfor %}
     </tbody>
   </table>

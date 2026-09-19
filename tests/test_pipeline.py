@@ -313,3 +313,82 @@ def test_fetch_portfolio_collapse_import():
     import app.resume as r
     from app.normalize import collapse as _c  # noqa: F401
     assert "collapse" in dir(r)
+
+
+# --- regression: corpus replace (2026-09-20) — new seed version must wipe old
+# jobs but never user data (votes, profiles) ---
+
+def test_corpus_replace_wipes_jobs_keeps_user_data(tmp_path):
+    import sqlite3
+    from app.db import connect, init_db
+    from app.sync import sync_jobs_from_seed
+
+    def make_db(path, version, jobs, votes):
+        conn = connect(path)
+        init_db(conn)
+        for i in range(jobs):
+            conn.execute(
+                "INSERT INTO job (canonical_key, title, company, location, description,"
+                " first_seen, last_seen, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (f"k{i}", f"Job {i}", "Acme", "India", "x" * 100, "2026-09-01",
+                 "2026-09-01", "2026-09-01", "2026-09-01"))
+        for v in range(votes):
+            conn.execute(
+                "INSERT OR IGNORE INTO role_request (role_name, created_at) VALUES (?,?)",
+                ("GenAI Engineer", "2026-09-01"))
+            conn.execute(
+                "INSERT INTO role_vote (request_id, voter_hash, created_at) "
+                "SELECT id, ?, ? FROM role_request WHERE role_name = 'GenAI Engineer'",
+                (f"v{v}", "2026-09-01"))
+        if version:
+            conn.execute("INSERT INTO app_meta (key, value) VALUES ('corpus_version', ?)",
+                         (version,))
+        conn.commit()
+        return conn
+
+    live = make_db(tmp_path / "live.db", "old", jobs=5, votes=7)
+    seed = make_db(tmp_path / "seed.db", "2026-09-20-jd", jobs=3, votes=0)
+    seed.close()
+
+    n = sync_jobs_from_seed(live, tmp_path / "seed.db")
+    assert n == 3
+    assert live.execute("SELECT COUNT(*) FROM job").fetchone()[0] == 3  # replaced
+    assert live.execute("SELECT COUNT(*) FROM role_vote").fetchone()[0] == 7  # kept
+    assert live.execute("SELECT value FROM app_meta WHERE key='corpus_version'").fetchone()[0] == "2026-09-20-jd"
+    # same version again -> merge, no wipe
+    sync_jobs_from_seed(live, tmp_path / "seed.db")
+    assert live.execute("SELECT COUNT(*) FROM job").fetchone()[0] == 3
+    live.close()
+
+
+def test_corpus_replace_without_version_merges(tmp_path):
+    from app.db import connect, init_db
+    from app.sync import sync_jobs_from_seed
+
+    def make_db(path, version, jobs):
+        conn = connect(path)
+        init_db(conn)
+        for i in range(jobs):
+            conn.execute(
+                "INSERT INTO job (canonical_key, title, company, location, description,"
+                " first_seen, last_seen, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (f"k{i}", f"Job {i}", "Acme", "India", "x" * 100, "2026-09-01",
+                 "2026-09-01", "2026-09-01", "2026-09-01"))
+        if version:
+            conn.execute("INSERT INTO app_meta (key, value) VALUES ('corpus_version', ?)",
+                         (version,))
+        conn.commit()
+        return conn
+
+    live = make_db(tmp_path / "live.db", None, jobs=5)
+    seed = make_db(tmp_path / "seed.db", None, jobs=3)
+    seed.close()
+    # seed jobs need distinct canonical keys, else merge updates in place
+    sconn = connect(tmp_path / "seed.db")
+    sconn.execute("UPDATE job SET canonical_key = 's' || substr(canonical_key, 2)")
+    sconn.commit()
+    sconn.close()
+    sync_jobs_from_seed(live, tmp_path / "seed.db")
+    # legacy seed without a version: old upsert merge, nothing wiped
+    assert live.execute("SELECT COUNT(*) FROM job").fetchone()[0] == 8
+    live.close()

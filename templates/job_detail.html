@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} — {{ job.company }} — Career-Ops{% endblock %}
 {% block content %}
-<div class="detail">
+<div class="detail fam-{{ job.family_slug or 'sde' }}">
   <section class="main">
     <div class="detail-head">
       <h1>{{ job.title }}</h1>
@@ -10,7 +10,7 @@
         {% if job.work_model and job.work_model != 'unspecified' %} · {{ job.work_model }}{% endif %}
       </div>
       <div class="chips" style="margin-top:8px">
-        {% if job.family_name %}<span class="chip">{{ job.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified — in review queue</span>{% endif %}
+        {% if job.family_name %}<span class="chip fam-chip fam-{{ job.family_slug }}">{{ job.family_name }}</span>{% else %}<span class="chip muted-chip">unclassified — in review queue</span>{% endif %}
         {% if job.exp_stated %}<span class="chip">{{ job.exp_stated }} (as stated)</span>{% endif %}
         {% if job.salary_text %}<span class="chip">{{ job.salary_text }}</span>{% endif %}
         {% if job.applicants %}<span class="chip muted-chip">{{ job.applicants }} applicants when seen</span>{% endif %}
