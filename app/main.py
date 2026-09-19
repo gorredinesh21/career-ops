@@ -17,7 +17,7 @@ from app.auth import logout as auth_logout
 from app.auth import register as auth_register
 from app.auth import user_for_token
 from app.config import TELEGRAM_URL, VOTE_REVIEW_THRESHOLD
-from app.db import get_db
+from app.db import get_db, write_txn
 from app.fit import band_of, capability_readiness, evaluate, typed_gaps
 from app.freshness import freshness_explanation
 from app.normalize import collapse
@@ -44,6 +44,22 @@ EXPERIENCE_MATRIX = [
 
 app = FastAPI(title="Career-Ops", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.on_event("startup")
+def startup() -> None:
+    """One-time boot: seed the persistent DB if empty, create schema, and
+    refresh job data from the baked snapshot (user data is never touched)."""
+    from app.db import connect, init_db
+    from app.sync import ensure_db, sync_jobs_from_seed
+    from app.config import DB_PATH, SEED_DB_PATH
+
+    ensure_db(DB_PATH, SEED_DB_PATH)
+    conn = connect()
+    init_db(conn)
+    synced = sync_jobs_from_seed(conn, SEED_DB_PATH)
+    conn.close()
+    print(f"[startup] db ready at {DB_PATH}; jobs synced from seed: {synced}", flush=True)
 
 
 def db():
@@ -165,11 +181,11 @@ def job_detail(request: Request, job_id: int):
             context=ctx(request, code=404, message="No such job."),
             status_code=404,
         )
-    conn.execute(
-        "INSERT INTO page_event (kind, job_id, created_at) VALUES ('job_view', ?, datetime('now','localtime'))",
-        (job_id,),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "INSERT INTO page_event (kind, job_id, created_at) VALUES ('job_view', ?, datetime('now','localtime'))",
+            (job_id,),
+        )
 
     ukey = user_key_for(request)
     prof = queries.latest_profile(conn, ukey)
@@ -209,12 +225,11 @@ def job_detail(request: Request, job_id: int):
 def job_feedback(job_id: int, kind: str = Form(...), note: str = Form("")):
     if kind not in ("stale", "wrong_role", "wrong_data"):
         kind = "wrong_data"
-    conn = db()
-    conn.execute(
-        "INSERT INTO feedback (job_id, kind, note, created_at) VALUES (?,?,?,datetime('now'))",
-        (job_id, kind, collapse(note)[:500]),
-    )
-    conn.commit()
+    with write_txn() as conn:
+        conn.execute(
+            "INSERT INTO feedback (job_id, kind, note, created_at) VALUES (?,?,?,datetime('now'))",
+            (job_id, kind, collapse(note)[:500]),
+        )
     return RedirectResponse(f"/jobs/{job_id}?feedback=thanks", status_code=303)
 
 
@@ -224,7 +239,8 @@ def track(request: Request, job_id: int, status: str = Form(...), note: str = Fo
     if queries.get_job(conn, job_id) is None:
         return RedirectResponse("/jobs", status_code=303)
     try:
-        queries.track_job(conn, user_key_for(request), job_id, status, note, resume_version)
+        with write_txn() as wconn:
+            queries.track_job(wconn, user_key_for(request), job_id, status, note, resume_version, commit=False)
     except ValueError:
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}?tracked={status}", status_code=303)
@@ -264,27 +280,31 @@ def roles(request: Request):
 
 @app.post("/roles/request")
 def role_request(role_name: str = Form(...)):
-    conn = db()
     name = collapse(role_name)[:80]
     if name:
-        conn.execute(
-            "INSERT INTO role_request (role_name, created_at) VALUES (?, datetime('now')) "
-            "ON CONFLICT(role_name) DO NOTHING",
-            (name,),
-        )
-        conn.commit()
+        with write_txn() as conn:
+            conn.execute(
+                "INSERT INTO role_request (role_name, created_at) VALUES (?, datetime('now')) "
+                "ON CONFLICT(role_name) DO NOTHING",
+                (name,),
+            )
     return RedirectResponse("/roles", status_code=303)
 
 
 @app.post("/roles/{request_id}/vote")
 def role_vote(request: Request, request_id: int):
     conn = db()
-    conn.execute(
-        "INSERT INTO role_vote (request_id, voter_hash, created_at) VALUES (?,?,datetime('now')) "
-        "ON CONFLICT(request_id, voter_hash) DO NOTHING",
-        (request_id, voter_hash(request)),
-    )
-    conn.commit()
+    exists = conn.execute(
+        "SELECT 1 FROM role_request WHERE id = ?", (request_id,)
+    ).fetchone()
+    if exists is None:
+        return RedirectResponse("/roles", status_code=303)  # stale vote target: no-op
+    with write_txn() as conn:
+        conn.execute(
+            "INSERT INTO role_vote (request_id, voter_hash, created_at) VALUES (?,?,datetime('now')) "
+            "ON CONFLICT(request_id, voter_hash) DO NOTHING",
+            (request_id, voter_hash(request)),
+        )
     return RedirectResponse("/roles", status_code=303)
 
 
@@ -488,8 +508,9 @@ async def profile_upload(
         if prof is not None:
             _save_prefs(conn, prof, band, work_pref, loc_pref)
             return RedirectResponse("/profile", status_code=303)
+    with write_txn() as wconn:
+        _store_profile(wconn, ukey, raw, source, (github_user or "").strip().lstrip("@"))
     conn = db()
-    pid = _store_profile(conn, ukey, raw, source, (github_user or "").strip().lstrip("@"))
     prof = queries.latest_profile(conn, ukey)
     _save_prefs(conn, prof, band, work_pref, loc_pref)
     return RedirectResponse("/profile", status_code=303)
@@ -522,13 +543,13 @@ def profile_review(request: Request, skill: str = Form(...), verdict: str = Form
     prof = queries.latest_profile(conn, ukey)
     if prof is None or verdict not in ("confirmed", "rejected"):
         return RedirectResponse("/profile", status_code=303)
-    conn.execute(
-        "INSERT INTO candidate_review (profile_id, skill, verdict, note, created_at) "
-        "VALUES (?,?,?,?,datetime('now')) "
-        "ON CONFLICT(profile_id, skill) DO UPDATE SET verdict = excluded.verdict, note = excluded.note",
-        (prof["id"], skill, verdict, collapse(note)[:300]),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "INSERT INTO candidate_review (profile_id, skill, verdict, note, created_at) "
+            "VALUES (?,?,?,?,datetime('now')) "
+            "ON CONFLICT(profile_id, skill) DO UPDATE SET verdict = excluded.verdict, note = excluded.note",
+            (prof["id"], skill, verdict, collapse(note)[:300]),
+        )
     return RedirectResponse("/profile#review", status_code=303)
 
 
@@ -546,20 +567,21 @@ def add_portfolio(request: Request, url: str = Form(...)):
         data = fetch_portfolio(url.strip())
         title = data["title"]
         skills_json = json.dumps(data["skills"])
-        for skill in data["skills"]:
-            conn.execute(
-                "INSERT OR IGNORE INTO candidate_skill (profile_id, skill, section, evidence, "
-                "depth, confidence, origin) VALUES (?,?,?,?,?,?, 'portfolio')",
-                (prof["id"], skill, "portfolio", url.strip(), "portfolio mention", 0.45),
-            )
+        with write_txn() as wconn:
+            for skill in data["skills"]:
+                wconn.execute(
+                    "INSERT OR IGNORE INTO candidate_skill (profile_id, skill, section, evidence, "
+                    "depth, confidence, origin) VALUES (?,?,?,?,?,?, 'portfolio')",
+                    (prof["id"], skill, "portfolio", url.strip(), "portfolio mention", 0.45),
+                )
     except Exception as exc:
         error = str(exc)
-    conn.execute(
-        "INSERT INTO candidate_portfolio (profile_id, url, title, skills_json, error, fetched_at) "
-        "VALUES (?,?,?,?,?,datetime('now'))",
-        (prof["id"], url.strip()[:300], title[:160], skills_json, error[:300]),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "INSERT INTO candidate_portfolio (profile_id, url, title, skills_json, error, fetched_at) "
+            "VALUES (?,?,?,?,?,datetime('now'))",
+            (prof["id"], url.strip()[:300], title[:160], skills_json, error[:300]),
+        )
     return RedirectResponse("/profile#portfolio", status_code=303)
 
 
@@ -595,15 +617,15 @@ def profile_delete(request: Request):
     conn = db()
     ukey = user_key_for(request)
     prof = queries.latest_profile(conn, ukey)
-    if prof:
-        conn.execute("DELETE FROM candidate_profile WHERE id = ?", (prof["id"],))
-        conn.execute("DELETE FROM candidate_skill WHERE profile_id = ?", (prof["id"],))
-        conn.execute("DELETE FROM candidate_github_repo WHERE profile_id = ?", (prof["id"],))
-        conn.execute("DELETE FROM candidate_education WHERE profile_id = ?", (prof["id"],))
-        conn.execute("DELETE FROM candidate_review WHERE profile_id = ?", (prof["id"],))
-        conn.execute("DELETE FROM candidate_portfolio WHERE profile_id = ?", (prof["id"],))
-    conn.execute("DELETE FROM application_event WHERE user_key = ?", (ukey,))
-    conn.commit()
+    with write_txn() as wconn:
+        if prof:
+            wconn.execute("DELETE FROM candidate_profile WHERE id = ?", (prof["id"],))
+            wconn.execute("DELETE FROM candidate_skill WHERE profile_id = ?", (prof["id"],))
+            wconn.execute("DELETE FROM candidate_github_repo WHERE profile_id = ?", (prof["id"],))
+            wconn.execute("DELETE FROM candidate_education WHERE profile_id = ?", (prof["id"],))
+            wconn.execute("DELETE FROM candidate_review WHERE profile_id = ?", (prof["id"],))
+            wconn.execute("DELETE FROM candidate_portfolio WHERE profile_id = ?", (prof["id"],))
+        wconn.execute("DELETE FROM application_event WHERE user_key = ?", (ukey,))
     return RedirectResponse("/profile", status_code=303)
 
 
@@ -635,30 +657,28 @@ def alerts_page(request: Request):
 def save_alert(request: Request, name: str = Form(...), query_string: str = Form(...)):
     conn = db()
     ukey = user_key_for(request)
-    conn.execute(
-        "INSERT INTO saved_search (user_key, name, query_string, created_at) VALUES (?,?,?,datetime('now'))",
-        (ukey, collapse(name)[:60], query_string[:300]),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "INSERT INTO saved_search (user_key, name, query_string, created_at) VALUES (?,?,?,datetime('now'))",
+            (ukey, collapse(name)[:60], query_string[:300]),
+        )
     return RedirectResponse("/alerts", status_code=303)
 
 
 @app.post("/alerts/{search_id}/check")
 def check_alert(search_id: int):
-    conn = db()
-    conn.execute(
-        "UPDATE saved_search SET last_checked = date('now','localtime') WHERE id = ?",
-        (search_id,),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "UPDATE saved_search SET last_checked = date('now','localtime') WHERE id = ?",
+            (search_id,),
+        )
     return RedirectResponse("/alerts", status_code=303)
 
 
 @app.post("/alerts/{search_id}/delete")
 def delete_alert(search_id: int):
-    conn = db()
-    conn.execute("DELETE FROM saved_search WHERE id = ?", (search_id,))
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute("DELETE FROM saved_search WHERE id = ?", (search_id,))
     return RedirectResponse("/alerts", status_code=303)
 
 
@@ -671,11 +691,11 @@ def agent_page(request: Request, q: str = ""):
     ukey = user_key_for(request)
     answer = None
     if q:
-        conn.execute(
-            "INSERT INTO page_event (kind, detail, created_at) VALUES ('agent_query', ?, datetime('now','localtime'))",
-            (q[:200],),
-        )
-        conn.commit()
+        with write_txn() as wconn:
+            wconn.execute(
+                "INSERT INTO page_event (kind, detail, created_at) VALUES ('agent_query', ?, datetime('now','localtime'))",
+                (q[:200],),
+            )
         answer = answer_query(conn, ukey, q)
     return templates.TemplateResponse(
         request=request, name="agent.html",

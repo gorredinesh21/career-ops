@@ -8,6 +8,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from app.config import SESSION_TTL_DAYS
+from app.db import write_txn
 
 
 def _hash_password(password: str, salt: bytes = None) -> str:
@@ -33,11 +34,11 @@ def register(conn: sqlite3.Connection, username: str, password: str):
         return None, "Password must be at least 8 characters."
     if conn.execute("SELECT 1 FROM co_user WHERE username = ?", (username,)).fetchone():
         return None, "That username is taken."
-    cur = conn.execute(
-        "INSERT INTO co_user (username, password_hash, created_at) VALUES (?,?,?)",
-        (username, _hash_password(password), datetime.now().isoformat(timespec="seconds")),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        cur = wconn.execute(
+            "INSERT INTO co_user (username, password_hash, created_at) VALUES (?,?,?)",
+            (username, _hash_password(password), datetime.now().isoformat(timespec="seconds")),
+        )
     return cur.lastrowid, None
 
 
@@ -50,17 +51,17 @@ def login(conn: sqlite3.Connection, username: str, password: str):
         return None, "Wrong username or password."
     token = secrets.token_urlsafe(32)
     expires = (datetime.now() + timedelta(days=SESSION_TTL_DAYS)).isoformat(timespec="seconds")
-    conn.execute(
-        "INSERT INTO session (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
-        (token, row["id"], datetime.now().isoformat(timespec="seconds"), expires),
-    )
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute(
+            "INSERT INTO session (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+            (token, row["id"], datetime.now().isoformat(timespec="seconds"), expires),
+        )
     return token, None
 
 
 def logout(conn: sqlite3.Connection, token: str) -> None:
-    conn.execute("DELETE FROM session WHERE token = ?", (token,))
-    conn.commit()
+    with write_txn() as wconn:
+        wconn.execute("DELETE FROM session WHERE token = ?", (token,))
 
 
 def user_for_token(conn: sqlite3.Connection, token: str):

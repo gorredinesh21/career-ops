@@ -6,6 +6,8 @@ JobSkill requirements + RoleFamily taxonomy + role requests/votes + feedback
 + ingest run audit.
 """
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from app.config import DB_PATH
@@ -232,14 +234,22 @@ CREATE TABLE IF NOT EXISTS candidate_github_repo (
 def connect(db_path: Path = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
+def configure_wal(conn: sqlite3.Connection) -> None:
+    """WAL is persistent on the file — set once at startup. Setting it per
+    connection takes an exclusive lock and serializes concurrent traffic."""
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.commit()
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    configure_wal(conn)
     conn.executescript(SCHEMA)
     from app.classify import FAMILIES
 
@@ -252,7 +262,30 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_local = threading.local()
+_write_lock = threading.Lock()
+
+
 def get_db() -> sqlite3.Connection:
-    conn = connect()
-    init_db(conn)
+    """Thread-local reused connection (per-request open/close is expensive on
+    a GCS-backed mount). Schema init happens once at startup, not here."""
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = connect()
+        _local.conn = conn
     return conn
+
+
+@contextmanager
+def write_txn():
+    """All writes go through one in-process lock: SQLite write transactions
+    are microseconds, and serializing them removes reader/writer contention
+    (SQLITE_BUSY) completely for a single-instance deployment."""
+    with _write_lock:
+        conn = get_db()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise

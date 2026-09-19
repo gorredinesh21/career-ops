@@ -234,7 +234,7 @@ STATUSES = ["saved", "applied", "assessment", "interview", "offer",
             "rejected", "withdrawn", "closed"]
 
 
-def track_job(conn, user_key: str, job_id: int, status: str, note: str = "", resume_version: str = ""):
+def track_job(conn, user_key: str, job_id: int, status: str, note: str = "", resume_version: str = "", commit: bool = True):
     if status not in STATUSES:
         raise ValueError(f"unknown status {status}")
     conn.execute(
@@ -242,7 +242,8 @@ def track_job(conn, user_key: str, job_id: int, status: str, note: str = "", res
         "VALUES (?,?,?,?,?,datetime('now','localtime'))",
         (user_key, job_id, status, collapse(note)[:500], collapse(resume_version)[:120]),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def current_application_status(conn, user_key: str, job_id: int):
