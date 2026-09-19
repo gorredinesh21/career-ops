@@ -162,3 +162,17 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
   font-family: inherit; background: #fff; color: var(--text);
 }
 .flash.warn { background: #fef2f2; border-color: #fecaca; color: var(--bad); }
+
+/* applications + fit */
+.fitband { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 14px; }
+.gaps { padding-left: 18px; }
+.gaps li { margin-bottom: 8px; }
+.trackbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.status-saved, .status-applied { background: #eff6ff; color: #1d4ed8; }
+.status-assessment, .status-interview { background: #fdf4ff; color: #86198f; }
+.status-offer { background: #ecfdf5; color: var(--ok); }
+.status-rejected, .status-withdrawn, .status-closed { background: #f5f5f4; color: var(--muted); }
+.repo-flag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.repo-flag.active-original { background: #ecfdf5; color: var(--ok); }
+.repo-flag.fork { background: #fef3c7; color: #92400e; }
+.repo-flag.stale { background: #f5f5f4; color: var(--muted); }

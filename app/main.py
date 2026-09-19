@@ -21,6 +21,23 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 VOTE_REVIEW_THRESHOLD = 25  # transparent per BRD Module B
 
+# Experience-aware role model (BRD Module D): product-level reference
+# dimensions, not an industry standard. Bands are context, not proof.
+EXPERIENCE_MATRIX = [
+    ("Execution", "Small tasks with guidance", "Own small/medium work",
+     "Independently deliver meaningful components", "Own larger ambiguous work"),
+    ("Technical depth", "Fundamentals + role basics", "Solid applied skills",
+     "Deeper system understanding", "Architecture/trade-off awareness"),
+    ("Ownership", "Task-level", "Feature/component-level",
+     "Service/domain-level", "Cross-component/team-level signals"),
+    ("Debugging", "Known failure modes", "Independent troubleshooting",
+     "Complex incident/problem solving", "Prevention and systemic improvements"),
+    ("Communication", "Clear status/reasoning", "Technical communication within team",
+     "Cross-functional clarity", "Stakeholder influence and technical direction"),
+    ("Mentoring", "Learning orientation", "May help peers informally",
+     "Regular peer support", "Coaching/technical leadership signals"),
+]
+
 app = FastAPI(title="Career-Ops", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
@@ -125,6 +142,16 @@ def job_detail(request: Request, job_id: int):
             context=ctx(request, code=404, message="No such job."),
             status_code=404,
         )
+    fit = None
+    fit_band = fit_why = None
+    gap_actions = None
+    profile_skills = []
+    if prof:
+        profile_skills = queries.profile_skills(conn, prof["id"])
+        fit = queries.job_fit_for_profile(db(), job_id, prof["id"])
+        if fit:
+            fit_band, fit_why = queries.fit_band(fit)
+            gap_actions = queries.gap_actions(fit, profile_skills)
     return templates.TemplateResponse(
         request=request, name="job_detail.html",
         context=ctx(
@@ -135,8 +162,40 @@ def job_detail(request: Request, job_id: int):
             feedback=queries.job_feedback(db(), job_id),
             snapshots=queries.snapshot_count(db(), job_id),
             freshness_why=freshness_explanation(job["freshness"]),
-            fit=queries.job_fit_for_profile(db(), job_id, prof["id"]) if prof else None,
+            fit=fit,
+            fit_band=fit_band,
+            fit_why=fit_why,
+            gap_actions=gap_actions,
+            profile_skills=profile_skills,
         ),
+    )
+
+
+@app.post("/jobs/{job_id}/track")
+def track(job_id: int, status: str = Form(...), note: str = Form(""), resume_version: str = Form("")):
+    conn = db()
+    if queries.get_job(conn, job_id) is None:
+        return RedirectResponse("/jobs", status_code=303)
+    try:
+        queries.track_job(conn, job_id, status, note, resume_version)
+    except ValueError:
+        return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}?tracked={status}", status_code=303)
+
+
+@app.get("/applications", response_class=HTMLResponse)
+def applications_page(request: Request):
+    conn = db()
+    jobs, timelines = queries.applications(conn)
+    # newest-relevant first: offers/interviews above rejections
+    order = {s: i for i, s in enumerate(["offer", "interview", "assessment",
+                                         "applied", "saved", "withdrawn",
+                                         "rejected", "closed"])}
+    jobs = sorted(jobs, key=lambda j: (order.get(j["status"], 9), -(j["id"])))
+    return templates.TemplateResponse(
+        request=request, name="applications.html",
+        context=ctx(request, jobs=jobs, timelines=timelines,
+                    statuses=queries.STATUSES),
     )
 
 
@@ -155,12 +214,14 @@ def job_feedback(job_id: int, kind: str = Form(...), note: str = Form("")):
 
 @app.get("/roles", response_class=HTMLResponse)
 def roles(request: Request):
-    families = queries.families_with_counts(db())
-    requests_list = queries.role_requests(db())
+    conn = db()
+    families = queries.families_with_counts(conn)
+    requests_list = queries.role_requests(conn)
     return templates.TemplateResponse(
         request=request, name="roles.html",
         context=ctx(request, families=families, requests=requests_list,
-                    threshold=VOTE_REVIEW_THRESHOLD),
+                    threshold=VOTE_REVIEW_THRESHOLD,
+                    matrix=EXPERIENCE_MATRIX),
     )
 
 
@@ -202,20 +263,37 @@ def ops(request: Request):
 # ---------------------------------------------------------------- candidate profile (Module C v1)
 
 
+def _repo_flag(repo) -> str:
+    """Deterministic originality signal (BRD 8.2): forks flagged, recency and
+    description noted. Stars are never a proficiency signal."""
+    if repo["fork"]:
+        return "fork"
+    pushed = repo["pushed_at"] or ""
+    recent = pushed >= "2026-03"  # ~6 months
+    if recent and repo["description"]:
+        return "active-original"
+    if not recent:
+        return "stale"
+    return "original"
+
+
 @app.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request):
     conn = db()
     prof = queries.latest_profile(conn)
     skills = repos = []
     affinity = []
+    repo_flags = {}
     if prof:
         skills = queries.profile_skills(conn, prof["id"])
         repos = queries.profile_repos(conn, prof["id"])
         affinity = queries.profile_family_affinity(conn, prof["id"])
+        for r in repos:
+            repo_flags[r["name"]] = _repo_flag(r)
     return templates.TemplateResponse(
         request=request, name="profile.html",
         context=ctx(request, profile=prof, skills=skills, repos=repos,
-                    affinity=affinity,
+                    affinity=affinity, repo_flags=repo_flags,
                     depth_order=["production use", "independent build",
                                  "working use", "repo evidence",
                                  "listed in skills section", "mentioned", "exposure"]),

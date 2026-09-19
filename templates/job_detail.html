@@ -27,6 +27,7 @@
       <p class="muted small">Requirement-by-requirement comparison against your profile's
       evidence — no percentage scores, no hiring predictions. "Missing" means your resume
       and GitHub show no evidence yet; it does not mean you can't do it.</p>
+      <div class="fitband"><b>{{ fit_band }}</b> <span class="muted small">— {{ fit_why }}</span></div>
       <table class="table">
         <thead><tr><th>Requirement</th><th>Status</th><th>Your evidence</th></tr></thead>
         <tbody>
@@ -43,6 +44,16 @@
         {% endfor %}
         </tbody>
       </table>
+      {% if gap_actions %}
+      <div class="skillgroup">
+        <h3>What to do next (typed gaps)</h3>
+        <ul class="gaps">
+          {% for skill, gap_type, action in gap_actions %}
+          <li><b>{{ skill }}</b> — <i>{{ gap_type }}</i><br><span class="muted small">{{ action }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
     </div>
     {% elif skills %}
     <div class="card">
@@ -147,6 +158,23 @@
       <a class="btn primary block" href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Apply at the source ↗</a>
       {% endif %}
       <p class="muted small">Applications happen at the original source. Career-Ops never auto-applies.</p>
+      <h3>Track this job</h3>
+      {% if request.query_params.get('tracked') %}
+      <div class="flash">Tracked as "{{ request.query_params.get('tracked') }}" — see <a href="/applications">Application tracker</a>.</div>
+      {% endif %}
+      <form method="post" action="/jobs/{{ job.id }}/track" class="report">
+        <input type="text" name="resume_version" placeholder="resume version used (optional)" maxlength="120">
+        <input type="text" name="note" placeholder="note (optional)" maxlength="200">
+        <div class="trackbtns">
+          <button class="btn small-btn" name="status" value="saved">Save</button>
+          <button class="btn small-btn" name="status" value="applied">Applied</button>
+          <button class="btn small-btn" name="status" value="assessment">Assessment</button>
+          <button class="btn small-btn" name="status" value="interview">Interview</button>
+          <button class="btn small-btn" name="status" value="offer">Offer</button>
+          <button class="btn small-btn ghost" name="status" value="rejected">Rejected</button>
+          <button class="btn small-btn ghost" name="status" value="withdrawn">Withdrawn</button>
+        </div>
+      </form>
     </div>
 
     <div class="card">

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Applications — Career-Ops{% endblock %}
+{% block content %}
+<h1>Application tracker</h1>
+<p class="muted">Deliberately simple (BRD Module I): track status per job, keep the resume
+version you used, and see the timeline. Applications still happen at the source — this is
+memory, not auto-apply. Progress observations come later, from your own recorded history.</p>
+
+{% if jobs|length == 0 %}
+<div class="card empty">
+  <b>Nothing tracked yet.</b>
+  <p class="muted">Open any job and use "Track this job" — saved, applied, interview, offer.</p>
+  <a class="btn primary" href="/jobs">Browse jobs</a>
+</div>
+{% endif %}
+
+{% for j in jobs %}
+<div class="card">
+  <div class="job-card-top">
+    <div>
+      <a class="job-title" href="/jobs/{{ j.id }}">{{ j.title }}</a>
+      <div class="muted">{{ j.company }}{% if j.city %} · {{ j.city }}{% endif %}{% if j.family_name %} · {{ j.family_name }}{% endif %}</div>
+    </div>
+    <span class="badge status-{{ j.status }}">{{ j.status }}</span>
+  </div>
+  <div class="meta">current since {{ j.status_at[:16] }}{% if j.resume_version %} · resume: {{ j.resume_version }}{% endif %} · {{ j.events }} event{{ '' if j.events == 1 else 's' }}</div>
+  {% if timelines.get(j.id) %}
+  <details style="margin-top:6px">
+    <summary class="muted small">timeline</summary>
+    <ul class="sources">
+      {% for e in timelines[j.id] %}
+      <li><span class="chip">{{ e.status }}</span> <span class="muted small">{{ e.created_at[:16] }}{% if e.resume_version %} · resume: {{ e.resume_version }}{% endif %}</span>
+        {% if e.note %}<div class="muted small">{{ e.note }}</div>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

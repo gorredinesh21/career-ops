@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS candidate_skill (
     UNIQUE(profile_id, skill, origin, evidence)
 );
 
+CREATE TABLE IF NOT EXISTS application_event (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES job(id),
+    status TEXT NOT NULL,        -- saved|applied|assessment|interview|offer|rejected|withdrawn|closed
+    note TEXT,
+    resume_version TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appjob ON application_event(job_id);
+
 CREATE TABLE IF NOT EXISTS candidate_github_repo (
     profile_id INTEGER NOT NULL REFERENCES candidate_profile(id),
     name TEXT NOT NULL,

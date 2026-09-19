@@ -111,7 +111,10 @@ with Phase 2.</p>
     <tbody>
     {% for r in repos %}
       <tr>
-        <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>{% if r.fork %} <span class="chip muted-chip">fork</span>{% endif %}</td>
+        <td><a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>
+          {% set flag = repo_flags.get(r.name, '') %}
+          {% if flag %}<span class="repo-flag {{ flag }}">{{ flag.replace('-', ' ') }}</span>{% endif %}
+        </td>
         <td>{{ r.language }}</td>
         <td>{{ r.stars }}</td>
         <td class="muted">{{ r.pushed_at }}</td>

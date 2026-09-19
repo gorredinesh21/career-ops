@@ -260,3 +260,34 @@ def test_bare_developer_engineer_titles_are_sde():
     assert slug == "sde" and conf == 0.9
     slug2, _, _ = classify("Data Engineer", "")
     assert slug2 == "data-engineer"  # specificity still wins over bare 'engineer'
+
+
+# ---------------------------------------------------------------- fit band + gaps
+
+
+def _row(skill, req, status):
+    return {"skill": skill, "requirement": req, "status": status, "depth": "", "evidence": ""}
+
+
+def test_fit_band_thresholds():
+    from app.queries import fit_band
+    rows = [_row(f"s{i}", "required", "match") for i in range(3)] + [_row("x", "required", "missing")]
+    assert fit_band(rows)[0] == "Strong Evidence"  # 3/4
+    rows2 = [_row("a", "required", "match"), _row("b", "required", "missing"), _row("c", "required", "missing")]
+    assert fit_band(rows2)[0] in ("Partial Evidence", "Good Evidence")
+    assert fit_band([])[0] == "Unknown"
+
+
+def test_gap_actions_type_presentation_vs_evidence():
+    from app.queries import gap_actions
+    fit_rows = [_row("Kafka", "required", "missing"), _row("Spark", "required", "missing")]
+    profile_rows = [
+        {"skill": "Kafka", "depth": "listed in skills section"},  # presentation gap
+        {"skill": "PyTorch", "depth": "independent build"},
+    ]
+    actions = gap_actions(fit_rows, profile_rows)
+    by_skill = {a[0]: a for a in actions}
+    assert "presentation gap" in by_skill["Kafka"][1]
+    assert "evidence gap" in by_skill["Spark"][1]
+    # never encourages stuffing: recommendation must push real evidence, not adding terms
+    assert "project" in by_skill["Spark"][2]

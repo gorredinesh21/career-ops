@@ -2,6 +2,8 @@
 import re
 from collections import Counter
 
+from app.normalize import collapse
+
 BANDS = {
     "0-1": (0.0, 1.0),
     "1-2": (1.0, 2.0),
@@ -223,3 +225,91 @@ def job_fit_for_profile(conn, job_id: int, profile_id: int):
             out.append({"skill": r["skill"], "requirement": r["requirement"],
                         "status": "missing", "depth": "", "evidence": ""})
     return out
+
+
+# ---------------------------------------------------------------- applications (Module I)
+
+STATUSES = ["saved", "applied", "assessment", "interview", "offer",
+            "rejected", "withdrawn", "closed"]
+
+
+def track_job(conn, job_id: int, status: str, note: str = "", resume_version: str = ""):
+    if status not in STATUSES:
+        raise ValueError(f"unknown status {status}")
+    conn.execute(
+        "INSERT INTO application_event (job_id, status, note, resume_version, created_at) "
+        "VALUES (?,?,?,?,datetime('now','localtime'))",
+        (job_id, status, collapse(note)[:500], collapse(resume_version)[:120]),
+    )
+    conn.commit()
+
+
+def applications(conn):
+    """Current status per tracked job = latest event; full timeline attached."""
+    jobs = conn.execute(
+        """
+        SELECT j.id, j.title, j.company, j.city, f.name AS family_name,
+               a.status, a.created_at AS status_at, a.resume_version,
+               (SELECT COUNT(*) FROM application_event e2 WHERE e2.job_id = j.id) AS events
+        FROM job j
+        JOIN application_event a ON a.id = (
+            SELECT id FROM application_event e WHERE e.job_id = j.id
+            ORDER BY id DESC LIMIT 1
+        )
+        LEFT JOIN role_family f ON f.id = j.role_family_id
+        ORDER BY a.id DESC
+        """
+    ).fetchall()
+    timelines = {}
+    for row in conn.execute(
+        "SELECT job_id, status, note, resume_version, created_at "
+        "FROM application_event ORDER BY id"
+    ).fetchall():
+        timelines.setdefault(row["job_id"], []).append(row)
+    return jobs, timelines
+
+
+# ---------------------------------------------------------------- typed gaps (Module F)
+
+def fit_band(rows):
+    """Deterministic fit band (BRD Module F): no single pseudo-precise score."""
+    if not rows:
+        return "Unknown", "no structured requirements extracted from this posting yet"
+    required = [r for r in rows if r["requirement"] == "required"]
+    if not required:
+        required = rows
+    matched = sum(1 for r in required if r["status"] == "match")
+    weak = sum(1 for r in required if r["status"] == "weak")
+    ratio = matched / len(required)
+    if ratio >= 0.75:
+        band = "Strong Evidence"
+    elif ratio >= 0.5:
+        band = "Good Evidence"
+    elif matched + weak >= max(1, len(required) // 2):
+        band = "Partial Evidence"
+    else:
+        band = "Major Gap"
+    return band, (f"{matched} of {len(required)} required skills covered by your evidence "
+                  f"({weak} more at weak/exposure level)")
+
+
+def gap_actions(rows, profile_skills_rows):
+    """Concrete next actions for missing requirements (BRD gap philosophy:
+    never tell the user to stuff keywords — distinguish evidence gaps from
+    capability gaps from presentation gaps)."""
+    listed = {s["skill"].lower() for s in profile_skills_rows
+              if s["depth"] == "listed in skills section"}
+    actions = []
+    for r in rows:
+        if r["status"] != "missing":
+            continue
+        skill = r["skill"]
+        if skill.lower() in listed:
+            actions.append((skill, "presentation gap",
+                            f"'{skill}' is only listed in your skills section — move it into a "
+                            "project or work bullet with an outcome."))
+        elif r["status"] == "missing":
+            actions.append((skill, "evidence gap or capability gap — only you know which",
+                            f"No '{skill}' evidence in your profile. If you have used it, add the "
+                            "truthful line; if not, a small real project beats a keyword."))
+    return actions[:6]

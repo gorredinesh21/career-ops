@@ -17,8 +17,24 @@ one burst of votes cannot create taxonomy debt.</p>
 </div>
 
 <section class="voting">
-  <h2>Looking for another role?</h2>
-  <p class="muted">Request a role family the pipelines should index next. Votes are anonymous
+  <h2>Experience band expectations</h2>
+  <p class="muted">Years of experience are context, not a capability. These reference
+  dimensions (from the product spec) shape what guidance and expectations mean per band —
+  they never override the actual posting or your evidence.</p>
+  <div class="table-scroll">
+  <table class="table">
+    <thead><tr><th>Dimension</th><th>0–1 YOE</th><th>1–2 YOE</th><th>2–3 YOE</th><th>3–4 YOE</th></tr></thead>
+    <tbody>
+    {% for dim, a, b, c, d in matrix %}
+      <tr><td><b>{{ dim }}</b></td><td>{{ a }}</td><td>{{ b }}</td><td>{{ c }}</td><td>{{ d }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="voting">
+  <h2>Looking for another role?</h2>  <p class="muted">Request a role family the pipelines should index next. Votes are anonymous
   (a random browser cookie), one per browser per role.</p>
 
   <form method="post" action="/roles/request" class="inline-form">
