@@ -100,7 +100,7 @@ with Phase 2.</p>
       <div class="skillbars">
         {% for s in group %}
         <div class="skillbar {{ depth_cls.get(s.depth, 'd0') }}">
-          <span class="sname"><span class="dot"></span>{{ s.skill }}</span>
+          <span class="sname"><span class="s-ico">{{ s.skill | skill_icon }}</span>{{ s.skill }}</span>
           <span class="track"><span class="fill" style="width: {{ ((s.confidence or 0) * 100) | round | int }}%"></span></span>
           <span class="pct">{{ '%.0f'|format((s.confidence or 0) * 100) }}%</span>
           <span class="evidence">{{ s.section }} — “{{ s.evidence[:160] }}”</span>

@@ -27,6 +27,55 @@ from app.resume import extract_pdf_text
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+# Pictorial skill system: every skill gets an emoji icon + a stable hue so
+# chips/bars render visually distinct without any image assets.
+SKILL_ICONS = {
+    "python": "🐍", "java": "☕", "javascript": "✨", "typescript": "🔷",
+    "c++": "⚔️", "c": "🔧", "c#": "🎯", "go": "🐹", "golang": "🐹",
+    "rust": "🦀", "kotlin": "🟣", "swift": "🦅", "sql": "🗄️", "mysql": "🐬",
+    "postgresql": "🐘", "postgres": "🐘", "mongodb": "🍃", "redis": "🚀",
+    "kafka": "🌊", "spark": "🔥", "hadoop": "🐘", "airflow": "🌬️",
+    "dbt": "🧱", "snowflake": "❄️", "databricks": "🧱", "bigquery": "🔍",
+    "aws": "☁️", "gcp": "🌈", "azure": "🔷", "docker": "🐳", "kubernetes": "☸️",
+    "k8s": "☸️", "linux": "🐧", "git": "🌿", "github": "🐙", "ci/cd": "🔁",
+    "jenkins": "🤵", "terraform": "🏗️", "react": "⚛️", "next.js": "▲",
+    "vue": "💚", "angular": "🅰️", "html": "🧱", "css": "🎨", "node.js": "🟢",
+    "fastapi": "⚡", "flask": "🍾", "django": "🎸", "spring": "🌱",
+    "rest": "🔌", "graphql": "◉", "api": "🔌", "grpc": "🔌",
+    "machine learning": "🤖", "ml": "🤖", "deep learning": "🧠",
+    "nlp": "💬", "computer vision": "👁️", "llm": "🧠", "genai": "✨",
+    "generative ai": "✨", "rag": "📚", "langchain": "🔗", "langgraph": "🕸️",
+    "pytorch": "🔥", "tensorflow": "🧠", "scikit-learn": "🧪",
+    "pandas": "🐼", "numpy": "🔢",
+    "tableau": "📊", "power bi": "📊", "excel": "📗", "looker": "🔎",
+    "etl": "🏭", "data engineering": "🛠️", "data pipeline": "🛠️",
+    "agentic": "🤖", "agents": "🤖", "agent": "🤖", "prompt": "💬",
+    "testing": "🧪", "pytest": "🧪", "selenium": "🕹️",
+    "security": "🔐", "networking": "🌐", "system design": "🏗️",
+    "microservices": "🏢", "elasticsearch": "🔎",
+}
+
+
+def skill_icon(name: str) -> str:
+    key = (name or "").strip().lower()
+    for k, icon in SKILL_ICONS.items():
+        if key == k:
+            return icon
+    # word-boundary match for multi-word skills, e.g. "machine learning ops"
+    for k, icon in SKILL_ICONS.items():
+        if len(k) >= 4 and (k in key or key in k):
+            return icon
+    return "🧩"
+
+
+def skill_hue(name: str) -> int:
+    # Stable hue per skill name → every chip gets its own candy color.
+    return sum(ord(c) * (i + 3) for i, c in enumerate(name or "?")) % 360
+
+
+templates.env.filters["skill_icon"] = skill_icon
+templates.env.filters["skill_hue"] = skill_hue
+
 # Experience-aware role model (BRD Module D).
 EXPERIENCE_MATRIX = [
     ("Execution", "Small tasks with guidance", "Own small/medium work",

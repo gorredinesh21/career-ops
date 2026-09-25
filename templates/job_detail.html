@@ -90,19 +90,19 @@
       <p class="muted small">Extracted from the posting text by deterministic rules — nothing added.</p>
       <div class="skillgroup"><h3>Required / mentioned as core</h3>
         <div class="chips">
-        {% for s in skills if s.requirement == 'required' %}<span class="chip">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% for s in skills if s.requirement == 'required' %}<span class="chip skill-chip" style="--h: {{ s.skill | skill_hue }};">{{ s.skill | skill_icon }} {{ s.skill }}</span>{% else %}{% endfor %}
         {% if not (skills | selectattr('requirement', 'equalto', 'required') | list) %}<span class="muted small">none detected</span>{% endif %}
         </div>
       </div>
       <div class="skillgroup"><h3>Preferred / nice-to-have</h3>
         <div class="chips">
-        {% for s in skills if s.requirement == 'preferred' %}<span class="chip pref">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% for s in skills if s.requirement == 'preferred' %}<span class="chip pref skill-chip" style="--h: {{ s.skill | skill_hue }};">{{ s.skill | skill_icon }} {{ s.skill }}</span>{% else %}{% endfor %}
         {% if not (skills | selectattr('requirement', 'equalto', 'preferred') | list) %}<span class="muted small">none detected</span>{% endif %}
         </div>
       </div>
       <div class="skillgroup"><h3>Inferred from prose</h3>
         <div class="chips">
-        {% for s in skills if s.requirement == 'inferred' %}<span class="chip inferred">{{ s.skill }}</span>{% else %}{% endfor %}
+        {% for s in skills if s.requirement == 'inferred' %}<span class="chip inferred skill-chip" style="--h: {{ s.skill | skill_hue }};">{{ s.skill | skill_icon }} {{ s.skill }}</span>{% else %}{% endfor %}
         {% if not (skills | selectattr('requirement', 'equalto', 'inferred') | list) %}<span class="muted small">none</span>{% endif %}
         </div>
       </div>
